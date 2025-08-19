@@ -1,0 +1,26 @@
+---
+# Example HTTPRoute for an MCP server backend
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcp-server1-route
+  namespace: mcp-server1
+  annotations:
+    'kagenti/mcp-service-account-secret': 'server1-credential' #optional service account credential for interacting with the MCP (notifications, init)
+    'kagenti/mcp-prefix-override': 'server1-' # these could become another API
+  labels:
+    'mcp-server': 'true' # discovery label
+spec:
+  parentRefs:
+    - name: mcp-gateway
+      namespace: gateway-system
+  hostnames: #this is for a specific mcp server backend whether external or internal specific RL and AP applied
+    - 'server1.mcp.example.com' # tool/calls server1 is the prefix for tools from this mcp server and the host is what will be re-written by the ext_proc: e.g: (host: mcp.example.com/mcp {name server1_tool}=> {name: tool} host: server1.mcp.example.com)
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: mcp-server1
+          port: 80

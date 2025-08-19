@@ -1,0 +1,18 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcp-route
+spec:
+  parentRefs:
+    - name: mcp-gateway
+  hostnames:
+    - 'mcp.example.com' # initialize, tools/list, notification and routing authpolicy and rlp applied
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: mcp-broker
+          namespace: mcp-system
+          port: 8080
