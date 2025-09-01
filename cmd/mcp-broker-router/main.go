@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -154,6 +155,49 @@ func main() {
 	routerGRPCServer.GracefulStop()
 }
 
+// OAuthDiscoveryResponse represents the OAuth discovery endpoint response
+type OAuthDiscoveryResponse struct {
+	ResourceName           string   `json:"resource_name"`
+	Resource               string   `json:"resource"`
+	AuthorizationServers   []string `json:"authorization_servers"`
+	BearerMethodsSupported []string `json:"bearer_methods_supported"`
+	ScopesSupported        []string `json:"scopes_supported"`
+}
+
+// handleOAuthDiscovery handles the /.well-known/{oauth_endpoint}/realms/{realm} endpoint
+func handleOAuthDiscovery(w http.ResponseWriter, r *http.Request) {
+	response := OAuthDiscoveryResponse{
+		ResourceName: "MCP Server",
+		Resource:     "http://mcp.127-0-0-1.sslip.io:8888/mcp",
+		AuthorizationServers: []string{
+			"http://keycloak.127-0-0-1.sslip.io:8888/realms/mcp",
+		},
+		BearerMethodsSupported: []string{"header"},
+		ScopesSupported: []string{
+			"email",
+			"acr",
+			"address",
+			"basic",
+			"microprofile-jwt",
+			"offline_access",
+			"organization",
+			"profile",
+			"role_list",
+			"phone",
+			"roles",
+			"saml_organization",
+			"web-origins",
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		logger.Error("Failed to encode OAuth discovery response", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
 func setUpBroker(address string) (*http.Server, broker.MCPBroker) {
 
 	mux := http.NewServeMux()
@@ -161,6 +205,9 @@ func setUpBroker(address string) (*http.Server, broker.MCPBroker) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, "Hello, World!  BTW, the MCP server is on /mcp")
 	})
+
+	// OAuth discovery endpoint: /.well-known/{oauth_endpoint}/realms/{realm}
+	mux.HandleFunc("/.well-known/", handleOAuthDiscovery)
 	httpSrv := &http.Server{
 		Addr:         address,
 		Handler:      mux,

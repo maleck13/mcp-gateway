@@ -13,6 +13,41 @@ spec:
         - path:
             type: PathPrefix
             value: /mcp
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            add:
+              - name: Access-Control-Allow-Origin
+                value: "*"
+              - name: Access-Control-Allow-Methods
+                value: "GET, POST, PUT, DELETE, OPTIONS, HEAD"
+              - name: Access-Control-Allow-Headers
+                value: "Content-Type, Authorization, Accept, Origin, X-Requested-With"
+              - name: Access-Control-Max-Age
+                value: "3600"
+              - name: Access-Control-Allow-Credentials
+                value: "true"
+      backendRefs:
+        - name: mcp-broker
+          port: 8080
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /.well-known
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            add:
+              - name: Access-Control-Allow-Origin
+                value: "*"
+              - name: Access-Control-Allow-Methods
+                value: "GET, POST, PUT, DELETE, OPTIONS, HEAD"
+              - name: Access-Control-Allow-Headers
+                value: "Content-Type, Authorization, Accept, Origin, X-Requested-With"
+              - name: Access-Control-Max-Age
+                value: "3600"
+              - name: Access-Control-Allow-Credentials
+                value: "true"
       backendRefs:
         - name: mcp-broker
           port: 8080
