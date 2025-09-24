@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	toolHeader      = "x-mcp-toolname"
-	methodHeader    = "x-mcp-method" // internally used only
+	toolHeader      = "x-mcp-toolname" // internal to gateway
+	methodHeader    = "x-mcp-method"   // internal to gateway
 	sessionHeader   = "mcp-session-id"
-	authorityHeader = ":authority"
+	authorityHeader = ":authority" // internal set by router to govern routing
 )
 
 // ServerInfo contains routing information for an MCP server
