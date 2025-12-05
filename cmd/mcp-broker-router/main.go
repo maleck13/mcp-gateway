@@ -298,7 +298,10 @@ func setUpBroker(address string, toolFiltering bool, sessionManager *session.JWT
 	mux.HandleFunc("/status/", mcpBroker.HandleStatusRequest)
 
 	// Wrap the MCP handler with virtual server filtering
-	virtualServerHandler := broker.NewVirtualServerHandler(streamableHTTPServer, mcpConfig, logger)
+	virtualServerHandler, err := broker.NewVirtualServerHandler(streamableHTTPServer, mcpConfig, logger)
+	if err != nil {
+		log.Fatalf("failed to configure virtual server handler %s", err)
+	}
 	mux.Handle("/mcp", virtualServerHandler)
 
 	return httpSrv, mcpBroker, streamableHTTPServer

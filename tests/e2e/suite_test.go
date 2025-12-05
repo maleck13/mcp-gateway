@@ -102,6 +102,7 @@ var _ = BeforeSuite(func() {
 	Expect(res.ServerInfo.Name).NotTo(BeEmpty())
 	mcpGatewayClient.OnNotification(func(notification mcp.JSONRPCNotification) {
 		//not sure what to do with these
+		GinkgoWriter.Println("mcp gateway client recieved notification")
 	})
 
 	GinkgoWriter.Println(res.ServerInfo)

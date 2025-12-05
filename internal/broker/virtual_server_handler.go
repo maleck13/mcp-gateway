@@ -3,6 +3,7 @@ package broker
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,19 +21,19 @@ type VirtualServerHandler struct {
 }
 
 // NewVirtualServerHandler creates a new virtual server handler
-func NewVirtualServerHandler(mcpHandler http.Handler, config *config.MCPServersConfig, logger *slog.Logger) *VirtualServerHandler {
+func NewVirtualServerHandler(mcpHandler http.Handler, config *config.MCPServersConfig, logger *slog.Logger) (*VirtualServerHandler, error) {
 	if mcpHandler == nil {
-		panic("mcpHandler cannot be nil")
+		return nil, fmt.Errorf("mcpHandler is requred")
 	}
 	if config == nil {
-		panic("config cannot be nil")
+		return nil, fmt.Errorf("config cannot be nil")
 	}
 
 	return &VirtualServerHandler{
 		mcpHandler: mcpHandler,
 		config:     config,
 		logger:     logger,
-	}
+	}, nil
 }
 
 // ServeHTTP implements http.Handler interface

@@ -66,8 +66,6 @@ ginkgo run -v --tags=e2e --focus="test description" tests/e2e/
 ```
 
 ### E2E Test Reliability
-- Tests use broker `/status` endpoint for reliable server registration checks (not log parsing)
-- Port-forwards target deployments directly: `deployment/mcp-broker-router`
 - Tests clean up existing resources before creating to avoid conflicts
 - Structured JSON responses provide better debugging when tests fail
 

@@ -185,6 +185,8 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 	})
 
 	hooks.AddAfterListTools(mcpBkr.FilteredTools)
+	// todo add virtual server filter here instead of its own handler
+	//hooks.AddAfterListTools()
 
 	mcpBkr.listeningMCPServer = server.NewMCPServer(
 		"Kagenti MCP Broker",
