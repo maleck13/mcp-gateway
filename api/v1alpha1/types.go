@@ -69,6 +69,7 @@ type TargetReference struct {
 	Kind string `json:"kind"`
 
 	// Name is the name of the target resource.
+	// +kubebuilder:validation:Required
 	Name string `json:"name"`
 
 	// Namespace of the target resource (optional, defaults to same namespace)

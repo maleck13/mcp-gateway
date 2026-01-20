@@ -132,8 +132,8 @@ func forceDeleteTestMCPGatewayExtension(ctx context.Context, name, namespace str
 	}
 	Expect(err).NotTo(HaveOccurred())
 
-	if controllerutil.ContainsFinalizer(resource, mcpGatewayExtensionFinalizer) {
-		controllerutil.RemoveFinalizer(resource, mcpGatewayExtensionFinalizer)
+	if controllerutil.ContainsFinalizer(resource, mcpGatewayFinalizer) {
+		controllerutil.RemoveFinalizer(resource, mcpGatewayFinalizer)
 		Expect(testK8sClient.Update(ctx, resource)).To(Succeed())
 	}
 
@@ -155,11 +155,23 @@ func deleteTestReferenceGrant(ctx context.Context, name, namespace string) error
 	return err
 }
 
+// mockConfigWriterDeleter is a mock implementation of ConfigWriterDeleter for testing
+type mockConfigWriterDeleter struct{}
+
+func (m *mockConfigWriterDeleter) DeleteConfig(ctx context.Context, namespaceName types.NamespacedName) error {
+	return nil
+}
+
+func (m *mockConfigWriterDeleter) WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error {
+	return nil
+}
+
 // newTestReconciler creates a new MCPGatewayExtensionReconciler for testing
 func newTestReconciler() *MCPGatewayExtensionReconciler {
 	return &MCPGatewayExtensionReconciler{
-		Client: testIndexedClient,
-		Scheme: testK8sClient.Scheme(),
+		Client:              testIndexedClient,
+		Scheme:              testK8sClient.Scheme(),
+		ConfigWriterDeleter: &mockConfigWriterDeleter{},
 	}
 }
 
@@ -239,7 +251,7 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
-				g.Expect(controllerutil.ContainsFinalizer(updated, mcpGatewayExtensionFinalizer)).To(BeTrue())
+				g.Expect(controllerutil.ContainsFinalizer(updated, mcpGatewayFinalizer)).To(BeTrue())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
 
@@ -583,8 +595,9 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 
 			// use direct client for post-deletion reconcile (bypasses cache sync issues)
 			directReconciler := &MCPGatewayExtensionReconciler{
-				Client: testK8sClient,
-				Scheme: testK8sClient.Scheme(),
+				Client:              testK8sClient,
+				Scheme:              testK8sClient.Scheme(),
+				ConfigWriterDeleter: &mockConfigWriterDeleter{},
 			}
 
 			_, err = directReconciler.Reconcile(ctx, reconcile.Request{

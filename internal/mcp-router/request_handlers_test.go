@@ -7,7 +7,6 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"k8s.io/utils/ptr"
 
-	"errors"
 	"log/slog"
 	"os"
 	"testing"
@@ -80,7 +79,7 @@ func TestMCPRequestValid(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			valid, err := tc.Input.Validate()
 			if tc.ExpectErr != nil {
-				if errors.Is(tc.ExpectErr, err) {
+				if err == nil {
 					t.Fatalf("expected an error but got none")
 				}
 				if valid {

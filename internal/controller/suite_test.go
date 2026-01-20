@@ -90,9 +90,9 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	// set up field indexes for the MCPGatewayExtension controller
-	err = setupIndexExtensionToGateway(testMgr.GetFieldIndexer())
+	err = setupIndexExtensionToGateway(ctx, testMgr.GetFieldIndexer())
 	Expect(err).NotTo(HaveOccurred())
-	err = setupIndexExtensionToReferenceGrant(testMgr.GetFieldIndexer())
+	err = setupIndexExtensionToReferenceGrant(ctx, testMgr.GetFieldIndexer())
 	Expect(err).NotTo(HaveOccurred())
 
 	// start the manager's cache

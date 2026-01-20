@@ -57,12 +57,13 @@ func (config *MCPServersConfig) GetServerConfigByName(serverName string) (*MCPSe
 
 // MCPServer represents a server
 type MCPServer struct {
-	Name       string
-	URL        string
-	ToolPrefix string
-	Enabled    bool
-	Hostname   string
-	Credential string // env var name for auth
+	Name       string      `json:"name"                 yaml:"name"`
+	URL        string      `json:"url"                  yaml:"url"`
+	Hostname   string      `json:"hostname,omitempty"   yaml:"hostname,omitempty"`
+	ToolPrefix string      `json:"toolPrefix,omitempty" yaml:"toolPrefix,omitempty"`
+	Auth       *AuthConfig `json:"auth,omitempty"       yaml:"auth,omitempty"`
+	Credential string      `json:"credential,omitempty" yaml:"credential,omitempty"`
+	Enabled    bool        `json:"enabled"              yaml:"enabled"`
 }
 
 // ID returns a unique id for the a registered server
@@ -97,4 +98,24 @@ type VirtualServer struct {
 // Observer provides an interface to implement in order to register as an Observer of config changes
 type Observer interface {
 	OnConfigChange(ctx context.Context, config *MCPServersConfig)
+}
+
+// BrokerConfig holds broker configuration
+type BrokerConfig struct {
+	Servers        []MCPServer           `json:"servers" yaml:"servers"`
+	VirtualServers []VirtualServerConfig `json:"virtualServers,omitempty" yaml:"virtualServers,omitempty"`
+}
+
+// AuthConfig holds auth configuration
+type AuthConfig struct {
+	Type     string `json:"type"               yaml:"type"`
+	Token    string `json:"token,omitempty"    yaml:"token,omitempty"`
+	Username string `json:"username,omitempty" yaml:"username,omitempty"`
+	Password string `json:"password,omitempty" yaml:"password,omitempty"`
+}
+
+// VirtualServerConfig represents virtual server config
+type VirtualServerConfig struct {
+	Name  string   `json:"name"  yaml:"name"`
+	Tools []string `json:"tools" yaml:"tools"`
 }

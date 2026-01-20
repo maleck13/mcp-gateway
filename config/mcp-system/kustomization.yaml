@@ -5,6 +5,7 @@ resources:
   - trusted-header-public-key.yaml
   - rbac.yaml
   - broker-service.yaml
-  - deployment-broker.yaml
+  - mcpgatewayextension.yaml
   - deployment-controller.yaml
+  - deployment-broker.yaml
   - httproute.yaml

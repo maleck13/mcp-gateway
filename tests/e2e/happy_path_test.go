@@ -46,7 +46,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}
 	})
 
-	It("[Happy] should register multiple mcp servers with the gateway and make their tools available", func() {
+	It("[Happy] basic registration tool invocation and unregistration", func() {
 		By("Creating HTTPRoutes and MCP Servers")
 		// create httproutes for test servers that should already be deployed
 		registration := NewMCPServerResourcesWithDefaults("basic-registration", k8sClient)
@@ -73,64 +73,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer2.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer2.Spec.ToolPrefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
-	})
-
-	It("[Happy] should unregister mcp servers with the gateway", func() {
-		registration := NewMCPServerResourcesWithDefaults("basic-unregister", k8sClient)
-		// Important as we need to make sure to clean up
-		testResources = append(testResources, registration.GetObjects()...)
-		registeredServer := registration.Register(ctx)
-
-		By("Ensuring the gateway has registered the server")
-		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-
-		By("ensuring the tools are present in the gateway")
-		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
-			g.Expect(err).Error().NotTo(HaveOccurred())
-			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-
-		By("unregistering an MCPServerRegistration by Deleting the resource")
-		Expect(k8sClient.Delete(ctx, registeredServer)).To(Succeed())
-
-		By("Verifying broker removes the deleted server")
-		// do tools call check tools no longer present
-		Eventually(func(g Gomega) {
-			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)
-			g.Expect(err).NotTo(BeNil())
-			g.Expect(err.Error()).Should(ContainSubstring("not found"))
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
-			g.Expect(err).Error().NotTo(HaveOccurred())
-			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeFalse())
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-	})
-
-	It("[Happy] should invoke tools successfully", func() {
-		registration := NewMCPServerResourcesWithDefaults("tools-invoke", k8sClient)
-		// Important as we need to make sure to clean up
-		testResources = append(testResources, registration.GetObjects()...)
-		registeredServer := registration.Register(ctx)
-
-		By("Ensuring the gateway has registered the server")
-		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-
-		By("Verifying MCPServerRegistrations tools are present")
-		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
-			g.Expect(err).Error().NotTo(HaveOccurred())
-			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-
-		toolName := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "hello_world")
-		GinkgoWriter.Println("tool", toolName)
+		toolName := fmt.Sprintf("%s%s", registeredServer1.Spec.ToolPrefix, "hello_world")
 		By("Invoking a tool")
 		res, err := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
 			Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]string{
@@ -143,6 +86,22 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		content, ok := res.Content[0].(mcp.TextContent)
 		Expect(ok).To(BeTrue())
 		Expect(content.Text).To(Equal("Hello, e2e!"))
+
+		By("unregistering an MCPServerRegistration by Deleting the resource")
+		Expect(k8sClient.Delete(ctx, registeredServer1)).To(Succeed())
+
+		By("Verifying broker removes the deleted server")
+		// do tools call check tools no longer present
+		Eventually(func(g Gomega) {
+			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer1.Name, registeredServer1.Namespace)
+			g.Expect(err).NotTo(BeNil())
+			g.Expect(err.Error()).Should(ContainSubstring("not found"))
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).Error().NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer1.Spec.ToolPrefix, toolsList)).To(BeFalse())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
 	})
 
 	It("[Happy] should register mcp server with credential with the gateway and make the tools available", func() {
@@ -265,7 +224,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}
 	})
 
-	It("[Happy] should deploy redis and scale up the broker and see sessions shared", func() {
+	It("[Full] should deploy redis and scale up the broker and see sessions shared", func() {
 		Skip("not implemented")
 	})
 
@@ -495,7 +454,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 	// Note this is a complex test as it scales up and down the server. It can take quite a while to run.
 	// consider moving to separate suite
-	It("[Happy] should gracefully handle an MCP Server becoming unavailable", func() {
+	It("[Full] should gracefully handle an MCP Server becoming unavailable", func() {
 		By("Scaling down the MCP server3 deployment to 0")
 		Expect(ScaleDeployment(TestNamespace, scaledMCPTestServer, 0)).To(Succeed())
 
@@ -614,10 +573,8 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			g.Expect(allTools).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, allTools)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-
+		//e2e-server2-route-authorized-tools-test-d68c7664hello_world
 		By("Creating a JWT with allowed tools for the server")
-
-		GinkgoWriter.Println("server name ", registeredServer.Name)
 
 		allowedTools := map[string][]string{
 			fmt.Sprintf("%s/%s", registeredServer.Namespace, registeredServer.Name): {"hello_world"},

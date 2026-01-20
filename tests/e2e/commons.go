@@ -476,14 +476,14 @@ func (b *MCPServerResourcesBuilder) Register(ctx context.Context) *mcpv1alpha1.M
 // GetObjects returns all objects defined in the builder
 func (b *MCPServerResourcesBuilder) GetObjects() []client.Object {
 	objects := []client.Object{}
+	if b.mcpServer != nil {
+		objects = append(objects, b.mcpServer)
+	}
 	if b.credential != nil {
 		objects = append(objects, b.credential)
 	}
 	if b.httpRoute != nil {
 		objects = append(objects, b.httpRoute)
-	}
-	if b.mcpServer != nil {
-		objects = append(objects, b.mcpServer)
 	}
 	return objects
 }
@@ -503,7 +503,7 @@ func CleanupResource(ctx context.Context, k8sClient client.Client, obj client.Ob
 func UniqueName(prefix string) string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
-	return prefix + hex.EncodeToString(b)
+	return prefix + "-"+hex.EncodeToString(b)
 }
 
 // NotifyingMCPClient wraps an MCP client with notification handling

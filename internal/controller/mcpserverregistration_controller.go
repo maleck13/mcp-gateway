@@ -11,36 +11,38 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
-	"github.com/Kuadrant/mcp-gateway/pkg/config"
+	"github.com/Kuadrant/mcp-gateway/internal/config"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
-	// ConfigName is the name of the config
-	ConfigName = "mcp-gateway-config"
-
-	// SecretManagedByLabel is the label for managed secrets
-	SecretManagedByLabel = "mcp.kagenti.com/managed-by" //nolint:gosec // not a credential, just a label name
-	// SecretManagedByValue is the value for managed secrets
-	SecretManagedByValue = "mcp-gateway"
 
 	// CredentialSecretLabel is the required label for credential secrets
 	CredentialSecretLabel = "mcp.kagenti.com/credential" //nolint:gosec // not a credential, just a label name
 	// CredentialSecretValue is the required value for credential secrets
 	CredentialSecretValue = "true"
+	// HTTPRouteIndex used to find MCPServerRegistrations
+	HTTPRouteIndex = "spec.targetRef.httproute"
+	// HTTPRouteIndex used to find programmed httproutes TODO do we still need this?
+	ProgrammedHTTPRouteIndex = "status.hasProgrammedCondition"
 )
 
 // getConfigNamespace returns the namespace for config, using NAMESPACE env var or defaulting to mcp-system
@@ -63,11 +65,20 @@ type ServerInfo struct {
 	Credential         string
 }
 
+type MCPServerConfigReaderWriter interface {
+	WriteMCPServerConfig(ctx context.Context, servers []config.MCPServer, namespaceName types.NamespacedName) error
+	WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error
+	UpsertMCPServer(ctx context.Context, server config.MCPServer, namespaceName types.NamespacedName) error
+	// RemoveMCPServer removes a server from all config secrets cluster-wide
+	RemoveMCPServer(ctx context.Context, serverName string) error
+}
+
 // MCPReconciler reconciles both MCPServerRegistration and MCPVirtualServer resources
 type MCPReconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	APIReader client.Reader // uncached reader for fetching secrets
+	Scheme             *runtime.Scheme
+	DirectAPIReader    client.Reader // uncached reader for fetching secrets
+	ConfigReaderWriter MCPServerConfigReaderWriter
 }
 
 // +kubebuilder:rbac:groups=mcp.kagenti.com,resources=mcpserverregistrations,verbs=get;list;watch;create;update;patch;delete
@@ -75,385 +86,526 @@ type MCPReconciler struct {
 // +kubebuilder:rbac:groups=mcp.kagenti.com,resources=mcpvirtualservers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=endpoints,verbs=get;list;watch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 
+// TODOS
+// - should we make target ref immutable we need to handle this changing (it doesn't currently)
+
 // Reconcile reconciles both MCPServerRegistration and MCPVirtualServer resources
-func (r *MCPReconciler) Reconcile(
-	ctx context.Context,
-	req reconcile.Request,
-) (reconcile.Result, error) {
-	log := log.FromContext(ctx)
-	log.V(1).Info("Reconciling MCP resource", "name", req.Name, "namespace", req.Namespace)
+func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	logger := logf.FromContext(ctx).WithValues("resource", "mcpserverregistration")
+	logger.V(1).Info("Reconciling", "mcpregistrationname", req.Name, "namespace", req.Namespace)
 
-	// Try MCPServerRegistration first
 	mcpsr := &mcpv1alpha1.MCPServerRegistration{}
-	err := r.Get(ctx, req.NamespacedName, mcpsr)
-	if err == nil {
-		return r.reconcileMCPServerRegistration(ctx, mcpsr)
+	if err := r.Get(ctx, req.NamespacedName, mcpsr); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if !errors.IsNotFound(err) {
-		log.Error(err, "Failed to get MCPServerRegistration")
+	logger.V(1).Info("found", "mcpregistrationname", mcpsr.Name, "namespace", mcpsr.Namespace)
+
+	// handle deletion
+	if !mcpsr.DeletionTimestamp.IsZero() {
+		logger.Info("deleting", "mcpregistrationname", mcpsr.Name, "namespace", mcpsr.Namespace)
+		if controllerutil.ContainsFinalizer(mcpsr, mcpGatewayFinalizer) {
+			// todo we need gateway namespace for httproute
+			if err := r.ConfigReaderWriter.RemoveMCPServer(ctx, mcpServerName(mcpsr)); err != nil {
+				return ctrl.Result{}, err
+			}
+			controllerutil.RemoveFinalizer(mcpsr, mcpGatewayFinalizer)
+			if err := r.Update(ctx, mcpsr); err != nil {
+				if errors.IsConflict(err) {
+					logger.V(1).Info("conflict err requing to retry")
+					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+				}
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+	// add finalizer if not present
+	if !controllerutil.ContainsFinalizer(mcpsr, mcpGatewayFinalizer) {
+		logger.V(1).Info("no finalizer adding", "mcpregistrationname", mcpsr.Name)
+		if controllerutil.AddFinalizer(mcpsr, mcpGatewayFinalizer) {
+			if err := r.Update(ctx, mcpsr); err != nil {
+				if errors.IsConflict(err) {
+					logger.V(1).Info("conflict err requing to retry")
+					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+				}
+				return ctrl.Result{}, err
+			}
+			logger.V(1).Info("finalizer added", "mcpregistrationname", mcpsr.Name)
+			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+		}
+	}
+	logger.Info("main reconcile logic starting for", "mcpregistrationname", mcpsr.Name)
+
+	//get the httproute and gateway(s) this mcpserverregistration is targeting
+	targetRoute, err := r.getTargetHTTPRoute(ctx, mcpsr)
+	if err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+			if errors.IsConflict(err) {
+				// don't log these as they are just noise
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+			}
+			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+		}
+		return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
+	}
+	logger.Info("target route found ", "mcpregistrationname", targetRoute.Name)
+
+	// find gateways that have accepted the httproute
+	validGateways, err := r.findValidGatewaysForMCPServer(ctx, targetRoute)
+	if err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+			if errors.IsConflict(err) {
+				// don't log these as they are just noise
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+			}
+			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+		}
+		return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
+	}
+
+	// no valid gateways found. Unexpected lets exit
+	if len(validGateways) == 0 {
+		err := fmt.Errorf("no valid gateways for httproute")
+		logger.Error(err, "failed to find any valid gateways", "route", targetRoute)
+		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+			if errors.IsConflict(err) {
+				// don't log these as they are just noise
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+			}
+			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+		}
+		return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
+	}
+	logger.Info("valid gateways discovered ", "total", len(validGateways), "mcpregistrationname", mcpsr.Name)
+	// is there a valid mcpgatewayextension
+	validNamespaces := []string{}
+	for _, vg := range validGateways {
+		validMcpGatewayExtensions, err := r.findValidMCPGatewayExtsForGateway(ctx, vg)
+		if err != nil {
+			logger.Error(err, "failed to find valid mcpgatewayextension ", "gateway", vg, "mcpserverregistration", mcpsr)
+			if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+				if errors.IsConflict(err) {
+					// don't log these as they are just noise
+					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+				}
+				return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+			}
+		}
+		if len(validMcpGatewayExtensions) == 0 {
+			// this is not an error so we are going to exit
+			if err := r.updateStatus(ctx, mcpsr, false, "no valid mcpgatewayextensions configured", 0); err != nil {
+				if errors.IsConflict(err) {
+					// don't log these as they are just noise
+					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+				}
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
+		for _, vext := range validMcpGatewayExtensions {
+			validNamespaces = append(validNamespaces, vext.Namespace)
+		}
+	}
+
+	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr)
+	if err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+			if errors.IsConflict(err) {
+				// don't log these as they are just noise
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+			}
+			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+		}
+		return reconcile.Result{}, fmt.Errorf("failed to reconcile %s %w", mcpsr.Name, err)
+	}
+	for _, configNs := range validNamespaces {
+		if err := r.ConfigReaderWriter.UpsertMCPServer(ctx, *mcpServerconfig, config.ConfigNamespaceName(configNs)); err != nil {
+			if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+				if errors.IsConflict(err) {
+					// don't log these as they are just noise
+					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+				}
+				return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+			}
+			return reconcile.Result{}, fmt.Errorf("failed to reconcile %s %w", mcpsr.Name, err)
+		}
+	}
+
+	// Everything is in place now so we will now poll the gateway to check the registration status of the mcpserver
+	if err := r.setMCPServerRegistrationStatus(ctx, mcpsr, string(mcpServerconfig.ID())); err != nil {
+		if strings.Contains(err.Error(), "mcp server is not present in gateway yet") {
+			logger.V(1).Info("config not loaded in gateway yet. Will retry status check", "mcpserverregistration", mcpsr.Name)
+			// no point hammering the gateway when we know we are waiting for the config to be loaded
+			return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		logger.Error(err, "failed to set mcpserverregistration status", "mcpserverregistration", mcpsr.Name)
+		// TODO handle case where this keep failing forever we can prob requeue on specific err type
 		return reconcile.Result{}, err
 	}
 
-	// Try MCPVirtualServer
-	mcpVirtualServer := &mcpv1alpha1.MCPVirtualServer{}
-	err = r.Get(ctx, req.NamespacedName, mcpVirtualServer)
-	if err == nil {
-		return r.reconcileMCPVirtualServer(ctx, mcpVirtualServer)
+	return reconcile.Result{}, nil
+
+}
+
+// todo this should be shared with the broker
+func mcpServerName(mcp *mcpv1alpha1.MCPServerRegistration) string {
+	return fmt.Sprintf(
+		"%s/%s",
+		mcp.Namespace,
+		mcp.Name,
+	)
+}
+
+// TODO these duplicates code from the mcpgatewayextension reconcile. Deduplicate
+// findValidMCPGatewayExtsForGateway will find all MCPGatewayExtensions indexed against passed Gateway instance
+func (r *MCPReconciler) findValidMCPGatewayExtsForGateway(ctx context.Context, g *gatewayv1.Gateway) ([]*mcpv1alpha1.MCPGatewayExtension, error) {
+	logger := logf.FromContext(ctx).WithName("findValidMCPGatewayExtsForGateway")
+	validExtensions := []*mcpv1alpha1.MCPGatewayExtension{}
+	mcpGatewayExtList := &mcpv1alpha1.MCPGatewayExtensionList{}
+	if err := r.List(ctx, mcpGatewayExtList,
+		client.MatchingFields{gatewayIndexKey: gatewayToMCPExtIndexValue(*g)},
+	); err != nil {
+		return validExtensions, err
 	}
-	if !errors.IsNotFound(err) {
-		log.Error(err, "Failed to get MCPVirtualServer")
-		return reconcile.Result{}, err
+	logger.V(1).Info("found mcpgatewayextensions", "total", len(mcpGatewayExtList.Items))
+	for _, mg := range mcpGatewayExtList.Items {
+
+		if mg.Namespace == g.Namespace {
+			validExtensions = append(validExtensions, &mg)
+			continue
+		}
+		has, err := r.hasValidReferenceGrant(ctx, &mg)
+		if err != nil {
+			// we have to exit here
+			return validExtensions, fmt.Errorf("failed to check if mcpgatewayextension is valid %w", err)
+		}
+		if has && meta.IsStatusConditionTrue(mg.Status.Conditions, mcpv1alpha1.ConditionTypeReady) {
+			validExtensions = append(validExtensions, &mg)
+		}
+	}
+	// next we need to check is this mcpgateway in the same namespace as the gateway if it is it is valid
+	// we also need to check if there is a reference grant in the namespace
+	return validExtensions, nil
+}
+
+// hasValidReferenceGrant checks if a valid ReferenceGrant exists that allows the MCPGatewayExtension
+// to reference a Gateway in a different namespace
+func (r *MCPReconciler) hasValidReferenceGrant(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (bool, error) {
+	// list ReferenceGrants in the target Gateway's namespace
+	refGrantList := &gatewayv1beta1.ReferenceGrantList{}
+	if err := r.List(ctx, refGrantList, client.InNamespace(mcpExt.Spec.TargetRef.Namespace)); err != nil {
+		return false, fmt.Errorf("failed to list ReferenceGrants: %w", err)
 	}
 
-	// Neither resource found, regenerate config (handles deletions)
-	log.Info("MCP resource not found, regenerating aggregated config",
-		"req.NamespacedName", req.NamespacedName)
-	return r.regenerateAggregatedConfig(ctx)
+	for _, rg := range refGrantList.Items {
+		if r.referenceGrantAllows(&rg, mcpExt) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// referenceGrantAllows checks if a ReferenceGrant permits the MCPGatewayExtension to reference a Gateway
+func (r *MCPReconciler) referenceGrantAllows(rg *gatewayv1beta1.ReferenceGrant, mcpExt *mcpv1alpha1.MCPGatewayExtension) bool {
+	fromAllowed := false
+	toAllowed := false
+
+	// check if 'from' allows MCPGatewayExtension from its namespace
+	for _, from := range rg.Spec.From {
+		if string(from.Group) == mcpv1alpha1.GroupVersion.Group &&
+			string(from.Kind) == "MCPGatewayExtension" &&
+			string(from.Namespace) == mcpExt.Namespace {
+			fromAllowed = true
+			break
+		}
+	}
+
+	if !fromAllowed {
+		return false
+	}
+
+	// check if 'to' allows Gateway references
+	for _, to := range rg.Spec.To {
+		// empty group means core, but Gateway is in gateway.networking.k8s.io
+		if string(to.Group) == gatewayv1.GroupVersion.Group {
+			// empty kind means all kinds in the group, or specific Gateway kind
+			if to.Kind == "" || string(to.Kind) == "Gateway" {
+				// if name is specified, it must match; empty means all
+				if to.Name == nil || *to.Name == "" || string(*to.Name) == mcpExt.Spec.TargetRef.Name {
+					toAllowed = true
+					break
+				}
+			}
+		}
+	}
+
+	return toAllowed
+}
+
+// findValidGatewaysForMCPServer returns the gateways the httproute targeted by the MCPServerRegistration is the child of
+func (r *MCPReconciler) findValidGatewaysForMCPServer(ctx context.Context, targetHTTPRoute *gatewayv1.HTTPRoute) ([]*gatewayv1.Gateway, error) {
+	logger := logf.FromContext(ctx).WithName("findValidGatewaysForMCPServer")
+	var validGateways = []*gatewayv1.Gateway{}
+	if len(targetHTTPRoute.Status.Parents) > 0 {
+		// lets fetch the parents that are valid
+		for _, parent := range targetHTTPRoute.Status.Parents {
+			acceptedCond := meta.FindStatusCondition(parent.Conditions, string(gatewayv1.GatewayConditionAccepted))
+			if acceptedCond.Status == metav1.ConditionTrue {
+				pr := parent.ParentRef.DeepCopy()
+				if pr.Namespace == nil {
+					pr.Namespace = ptr.To(gatewayv1.Namespace(targetHTTPRoute.Namespace))
+				}
+				pg, err := r.getTargetGatewaysFromParentRef(ctx, pr)
+				if err != nil {
+					if errors.IsNotFound(err) {
+						// log but continue we will handle no gateways found later
+						logger.Error(err, "failed to find parent for httproute")
+						continue
+					}
+					//unexpected error
+					return validGateways, fmt.Errorf("unexpected error getting gateway from httproute %w", err)
+				}
+				// as this httproute was accepted by the gateway lets add it valid gateways
+				validGateways = append(validGateways, pg)
+			}
+		}
+	}
+	return validGateways, nil
+}
+
+func (r *MCPReconciler) getTargetHTTPRoute(ctx context.Context, mcpsr *mcpv1alpha1.MCPServerRegistration) (*gatewayv1.HTTPRoute, error) {
+	namespaceName := types.NamespacedName{Namespace: mcpsr.Namespace, Name: mcpsr.Spec.TargetRef.Name}
+	logger := logf.FromContext(ctx).WithValues("method", "getTargetHTTPRoute")
+	logger.V(1).Info("httproute target ", "namespacename ", namespaceName)
+	targetRoute := &gatewayv1.HTTPRoute{}
+	if err := r.Get(ctx, namespaceName, targetRoute); err != nil {
+		return nil, fmt.Errorf("failed to get targetted httproute %w", err)
+	}
+	return targetRoute, nil
+
+}
+
+func (r *MCPReconciler) getTargetGatewaysFromParentRef(ctx context.Context, parent *gatewayv1.ParentReference) (*gatewayv1.Gateway, error) {
+	namespaceName := types.NamespacedName{Namespace: string(*parent.Namespace), Name: string(parent.Name)}
+	g := &gatewayv1.Gateway{}
+	if err := r.Client.Get(ctx, namespaceName, g); err != nil {
+		return nil, fmt.Errorf("failed to get parent gateway for httproute: %w", err)
+	}
+	return g, nil
 }
 
 // reconcileMCPServerRegistration handles MCPServerRegistration reconciliation (existing logic)
-func (r *MCPReconciler) reconcileMCPServerRegistration(
-	ctx context.Context,
-	mcpsr *mcpv1alpha1.MCPServerRegistration,
-) (reconcile.Result, error) {
-	log := log.FromContext(ctx)
-	log.V(1).Info("Reconciling MCPServerRegistration", "name", mcpsr.Name, "namespace", mcpsr.Namespace)
-
-	// validate credential secret if configured
-	if mcpsr.Spec.CredentialRef != nil {
-		if err := r.validateCredentialSecret(ctx, mcpsr); err != nil {
-			log.Error(err, "Credential validation failed")
-			// still regenerate config to ensure other servers work
-			if _, configErr := r.regenerateAggregatedConfig(ctx); configErr != nil {
-				log.Error(configErr, "Failed to regenerate config after credential validation error")
-			}
-			return reconcile.Result{}, r.updateStatus(ctx, mcpsr, false, fmt.Sprintf("Credential validation failed: %v", err), 0)
-		}
-		log.V(1).Info("Credential validation success ", "credential ref", mcpsr.Spec.CredentialRef)
-	}
-
-	serverInfo, err := r.discoverServersFromHTTPRoutes(ctx, mcpsr)
-	if err != nil {
-		log.Error(err, "Failed to discover servers from HTTPRoutes")
-		// still regenerate config to ensure credentials are aggregated
-		if _, configErr := r.regenerateAggregatedConfig(ctx); configErr != nil {
-			log.Error(configErr, "Failed to regenerate config after discovery error")
-		}
-		return reconcile.Result{}, r.updateStatus(ctx, mcpsr, false, err.Error(), 0)
-	}
+func (r *MCPReconciler) setMCPServerRegistrationStatus(ctx context.Context, mcpsr *mcpv1alpha1.MCPServerRegistration, serverID string) error {
+	log := logf.FromContext(ctx)
+	log.V(1).Info("setMCPServerRegistrationStatus", "mcpregistrationname", mcpsr.Name, "namespace", mcpsr.Namespace)
 
 	validator := NewServerValidator(r.Client)
+	// TODO this currently lists all servers
 	statusResponse, err := validator.ValidateServers(ctx)
 	if err != nil {
 		log.Error(err, "Failed to validate server status via broker")
 		ready, message := false, fmt.Sprintf("Validation failed: %v", err)
 		if err := r.updateStatus(ctx, mcpsr, ready, message, 0); err != nil {
 			log.Error(err, "Failed to update status")
-			return reconcile.Result{}, err
+			return err
 		}
-		return r.regenerateAggregatedConfig(ctx)
+		return err
 	}
 
-	var serverStatus upstream.ServerValidationStatus
+	var gatewayServerStatus upstream.ServerValidationStatus
 	for _, sr := range statusResponse.Servers {
-		if sr.ID == serverInfo.ID {
-			serverStatus = sr
+		log.Info("server response ", "id", sr.ID, "controller id ", serverID)
+		if sr.ID == serverID {
+			gatewayServerStatus = sr
 			break
 		}
 	}
 
-	if err := r.updateStatus(ctx, mcpsr, serverStatus.Ready, serverStatus.Message, serverStatus.TotalTools); err != nil {
-		log.Error(err, "Failed to update status")
-		return reconcile.Result{}, err
+	log.Info("server status ", "mcpregistrationname", mcpsr.Name, "status", gatewayServerStatus)
+	message := "mcp server is not present in gateway yet"
+	// if there is an id that matches then the gateway is registering the mcp
+	if gatewayServerStatus.ID != "" {
+		if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, gatewayServerStatus.Message, gatewayServerStatus.TotalTools); err != nil {
+			log.Error(err, "Failed to update status")
+			return err
+		}
+
+		if err := r.updateHTTPRouteStatus(ctx, mcpsr, true); err != nil {
+			log.Error(err, "Failed to update HTTPRoute status")
+		}
+		if !gatewayServerStatus.Ready {
+			return fmt.Errorf(message)
+		}
+		log.V(1).Info("server is ready")
+		return nil
+	}
+	// otherwise it hasn't picked up the config yet
+
+	if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, message, 0); err != nil {
+		return err
 	}
 
-	if err := r.updateHTTPRouteStatus(ctx, mcpsr, true); err != nil {
-		log.Error(err, "Failed to update HTTPRoute status")
-	}
-
-	// this handles the case where secret volume mounts take time to propagate (60-120s)
-	// retry for any failure, not just "no broker validation data yet", as credentials might not be available initially
-	if !serverStatus.Ready {
-		// calculate exponential backoff based on elapsed time since condition was set
-		baseDelay := 5 * time.Second
-		maxDelay := 60 * time.Second
-		factor := 2.0
-
-		// find when the Ready condition was last set to estimate retry count
-		var lastTransition time.Time
-		for _, cond := range mcpsr.Status.Conditions {
-			if cond.Type == "Ready" {
-				lastTransition = cond.LastTransitionTime.Time
-				break
-			}
-		}
-
-		// calculate how many retries based on elapsed time
-		// this avoids modifying the resource and triggering reconciliation loops
-		elapsed := time.Since(lastTransition)
-		estimatedRetryCount := 0
-		totalTime := time.Duration(0)
-		delay := baseDelay
-
-		for totalTime < elapsed {
-			totalTime += delay
-			if totalTime < elapsed {
-				estimatedRetryCount++
-				delay = time.Duration(float64(delay) * factor)
-				if delay > maxDelay {
-					delay = maxDelay
-				}
-			}
-		}
-
-		// calculate next retry delay
-		retryAfter := baseDelay
-		for i := 0; i < estimatedRetryCount && retryAfter < maxDelay; i++ {
-			retryAfter = time.Duration(float64(retryAfter) * factor)
-		}
-		if retryAfter > maxDelay {
-			retryAfter = maxDelay
-		}
-
-		log.V(1).Info("Retrying MCPServerRegistration with credentials pending validation",
-			"server", mcpsr.Name,
-			"retryAfter", retryAfter,
-			"estimatedRetryCount", estimatedRetryCount)
-
-		// Still regenerate config so broker can see the server
-		_, configErr := r.regenerateAggregatedConfig(ctx)
-		if configErr != nil {
-			log.Error(configErr, "Failed to regenerate config while waiting for credential validation")
-		}
-
-		return reconcile.Result{RequeueAfter: retryAfter}, nil
-	}
-
-	return r.regenerateAggregatedConfig(ctx)
+	return fmt.Errorf(message)
 }
 
-// reconcileMCPVirtualServer handles MCPVirtualServer reconciliation
-func (r *MCPReconciler) reconcileMCPVirtualServer(
-	ctx context.Context,
-	mcpVirtualServer *mcpv1alpha1.MCPVirtualServer,
-) (reconcile.Result, error) {
-	log := log.FromContext(ctx)
-	log.V(1).Info("Reconciling MCPVirtualServer", "name", mcpVirtualServer.Name, "namespace", mcpVirtualServer.Namespace)
-
-	// For now, just trigger config regeneration like the existing logic
-	// This keeps the same behavior as before
-	return r.regenerateAggregatedConfig(ctx)
-}
-
-func (r *MCPReconciler) regenerateAggregatedConfig(
-	ctx context.Context,
-) (reconcile.Result, error) {
-	log := log.FromContext(ctx)
-
-	mcpsrList := &mcpv1alpha1.MCPServerRegistrationList{}
-	if err := r.List(ctx, mcpsrList); err != nil {
-		log.Error(err, "Failed to list MCPServerRegistrations")
-		return reconcile.Result{}, err
+func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *gatewayv1.HTTPRoute, mcpsr *mcpv1alpha1.MCPServerRegistration) (*config.MCPServer, error) {
+	if mcpsr.DeletionTimestamp != nil {
+		// don't add deleting mcpserver
+		return nil, fmt.Errorf("cant generate config for deleting server %s/%s", mcpsr.Namespace, mcpsr.Name)
+	}
+	serverInfo, err := r.buildServerInfoFromHTTPRoute(ctx, targetRoute, mcpsr.Spec.Path)
+	// TODO: implement
+	serverName := mcpServerName(mcpsr)
+	serverConfig := config.MCPServer{
+		Name:       serverName,
+		URL:        serverInfo.Endpoint,
+		Hostname:   serverInfo.Hostname,
+		ToolPrefix: mcpsr.Spec.ToolPrefix,
+		Enabled:    true,
 	}
 
-	mcpVirtualServerList := &mcpv1alpha1.MCPVirtualServerList{}
-	if err := r.List(ctx, mcpVirtualServerList); err != nil {
-		log.Error(err, "Failed to list MCPVirtualServers")
-		return reconcile.Result{}, err
-	}
-
-	referencedHTTPRoutes := make(map[string]struct{})
-	for _, mcpsr := range mcpsrList.Items {
-		targetRef := mcpsr.Spec.TargetRef
-		if targetRef.Kind == "HTTPRoute" {
-			namespace := mcpsr.Namespace
-			if targetRef.Namespace != "" {
-				namespace = targetRef.Namespace
-			}
-			key := fmt.Sprintf("%s/%s", namespace, targetRef.Name)
-			referencedHTTPRoutes[key] = struct{}{}
-		}
-	}
-
-	if len(mcpsrList.Items) == 0 {
-		log.Info("No MCPServerRegistrations found, writing empty ConfigMap")
-		emptyConfig := &config.BrokerConfig{
-			Servers: []config.ServerConfig{},
-		}
-		if err := r.writeAggregatedConfig(ctx, emptyConfig); err != nil {
-			log.Error(err, "Failed to write empty configuration")
-			return reconcile.Result{}, err
-		}
-		log.Info("Successfully wrote empty ConfigMap")
-		return reconcile.Result{}, nil
-	}
-
-	brokerConfig := &config.BrokerConfig{
-		Servers:        []config.ServerConfig{},
-		VirtualServers: []config.VirtualServerConfig{},
-	}
-
-	for _, mcpsr := range mcpsrList.Items {
-
-		serverInfo, err := r.discoverServersFromHTTPRoutes(ctx, &mcpsr)
+	// add credential env var if configured
+	if mcpsr.Spec.CredentialRef != nil {
+		secret := &corev1.Secret{}
+		err = r.Get(ctx, types.NamespacedName{
+			Name:      mcpsr.Spec.CredentialRef.Name,
+			Namespace: mcpsr.Namespace,
+		}, secret)
 		if err != nil {
-			log.Error(err, "Failed to discover server endpoints",
-				"name", mcpsr.Name,
-				"namespace", mcpsr.Namespace)
-			continue
+			return nil, fmt.Errorf("failed to read credential ref sercret when building config %w", err)
 		}
-
-		serverName := fmt.Sprintf(
-			"%s/%s",
-			serverInfo.HTTPRouteNamespace,
-			serverInfo.HTTPRouteName,
-		)
-		serverConfig := config.ServerConfig{
-			Name:       serverName,
-			URL:        serverInfo.Endpoint,
-			Hostname:   serverInfo.Hostname,
-			ToolPrefix: serverInfo.ToolPrefix,
-			Enabled:    true,
+		val, ok := secret.Data[mcpsr.Spec.CredentialRef.Key]
+		if !ok {
+			return nil, fmt.Errorf("the secret no credentialref key field %s present %w", mcpsr.Spec.CredentialRef.Key, err)
 		}
-
-		// add credential env var if configured
-		if mcpsr.Spec.CredentialRef != nil {
-			secret := &corev1.Secret{}
-			err = r.Get(ctx, types.NamespacedName{
-				Name:      mcpsr.Spec.CredentialRef.Name,
-				Namespace: mcpsr.Namespace,
-			}, secret)
-			if err != nil {
-				log.Error(err, "failed to read credential secret")
-				continue
-			}
-			val, ok := secret.Data[mcpsr.Spec.CredentialRef.Key]
-			if !ok {
-				// no key log and continue
-				log.V(1).Info("the secret had no key ", "specified key", mcpsr.Spec.CredentialRef.Key)
-				continue
-			}
-			serverConfig.Credential = string(val)
-
-		}
-
-		brokerConfig.Servers = append(brokerConfig.Servers, serverConfig)
+		serverConfig.Credential = string(val)
 
 	}
-
-	// Process MCPVirtualServer resources
-	for _, mcpVirtualServer := range mcpVirtualServerList.Items {
-		virtualServerName := fmt.Sprintf("%s/%s", mcpVirtualServer.Namespace, mcpVirtualServer.Name)
-		brokerConfig.VirtualServers = append(brokerConfig.VirtualServers, config.VirtualServerConfig{
-			Name:  virtualServerName,
-			Tools: mcpVirtualServer.Spec.Tools,
-		})
-	}
-
-	if err := r.writeAggregatedConfig(ctx, brokerConfig); err != nil {
-		log.Error(err, "Failed to write aggregated configuration")
-		return reconcile.Result{}, err
-	}
-
-	log.V(1).Info("Successfully regenerated aggregated configuration",
-		"serverCount", len(brokerConfig.Servers),
-		"virtualServerCount", len(brokerConfig.VirtualServers))
-
-	if err := r.cleanupOrphanedHTTPRoutes(ctx, referencedHTTPRoutes); err != nil {
-		log.Error(err, "Failed to cleanup orphaned HTTPRoute conditions")
-	}
-
-	return reconcile.Result{}, nil
+	return &serverConfig, nil
 }
 
-func (r *MCPReconciler) writeAggregatedConfig(
-	ctx context.Context,
-	brokerConfig *config.BrokerConfig,
-) error {
-	writer := NewSecretWriter(r.Client, r.Scheme)
-	return writer.WriteAggregatedConfig(ctx, getConfigNamespace(), ConfigName, brokerConfig)
-}
+// func (r *MCPReconciler) regenerateAggregatedConfig(ctx context.Context) error {
+// 	log := logf.FromContext(ctx)
+// 	// TODO this currently regenerates the entire config
+// 	mcpsrList := &mcpv1alpha1.MCPServerRegistrationList{}
+// 	if err := r.List(ctx, mcpsrList); err != nil {
+// 		return fmt.Errorf("failed to regenerateAggregatedConfig %w", err)
+// 	}
 
-func (r *MCPReconciler) discoverServersFromHTTPRoutes(
-	ctx context.Context,
-	mcpsr *mcpv1alpha1.MCPServerRegistration,
-) (*ServerInfo, error) {
+// 	referencedHTTPRoutes := make(map[string]struct{})
+// 	for _, mcpsr := range mcpsrList.Items {
+// 		targetRef := mcpsr.Spec.TargetRef
+// 		if targetRef.Kind == "HTTPRoute" {
+// 			namespace := mcpsr.Namespace
+// 			if targetRef.Namespace != "" {
+// 				namespace = targetRef.Namespace
+// 			}
+// 			key := fmt.Sprintf("%s/%s", namespace, targetRef.Name)
+// 			referencedHTTPRoutes[key] = struct{}{}
+// 		}
+// 	}
+// 	servers := []config.MCPServer{}
+// 	if len(mcpsrList.Items) == 0 {
+// 		log.Info("No MCPServerRegistrations found, writing empty ConfigMap")
+// 		if err := r.ConfigReaderWriter.WriteMCPServerConfig(ctx, servers, config.DefaultNamespaceName); err != nil {
+// 			return fmt.Errorf("Failed to write empty configuration %w", err)
+// 		}
+// 		log.Info("Successfully wrote empty ConfigMap")
+// 		return nil
+// 	}
 
-	targetRef := mcpsr.Spec.TargetRef
+// 	for _, mcpsr := range mcpsrList.Items {
+// 		if mcpsr.DeletionTimestamp != nil {
+// 			// don't add deleting mcpserver
+// 			continue
+// 		}
+// 		httpRoute, err := r.getTargetHTTPRoute(ctx, &mcpsr)
+// 		// TODO we need the httproute here
+// 		serverInfo, err := r.buildServerInfoFromHTTPRoute(ctx, httpRoute, mcpsr.Spec.Path)
+// 		if err != nil {
+// 			log.Error(err, "Failed to discover server endpoints",
+// 				"mcpregistrationname", mcpsr.Name,
+// 				"namespace", mcpsr.Namespace)
+// 			continue
+// 		}
 
-	// Validate group and kind
-	if targetRef.Group != "gateway.networking.k8s.io" {
-		return nil, fmt.Errorf(
-			"invalid targetRef group %q: only gateway.networking.k8s.io is supported",
-			targetRef.Group,
-		)
-	}
-	if targetRef.Kind != "HTTPRoute" {
-		return nil, fmt.Errorf(
-			"invalid targetRef kind %q: only HTTPRoute is supported",
-			targetRef.Kind,
-		)
-	}
+// 		serverName := fmt.Sprintf(
+// 			"%s/%s",
+// 			serverInfo.HTTPRouteNamespace,
+// 			serverInfo.HTTPRouteName,
+// 		)
+// 		serverConfig := config.MCPServer{
+// 			Name:       serverName,
+// 			URL:        serverInfo.Endpoint,
+// 			Hostname:   serverInfo.Hostname,
+// 			ToolPrefix: mcpsr.Spec.ToolPrefix,
+// 			Enabled:    true,
+// 		}
 
-	namespace := mcpsr.Namespace
-	if targetRef.Namespace != "" && targetRef.Namespace != namespace {
-		return nil, fmt.Errorf(
-			"cross-namespace reference to %s/%s not allowed without ReferenceGrant support",
-			targetRef.Namespace,
-			targetRef.Name,
-		)
-	}
+// 		// add credential env var if configured
+// 		if mcpsr.Spec.CredentialRef != nil {
+// 			secret := &corev1.Secret{}
+// 			err = r.Get(ctx, types.NamespacedName{
+// 				Name:      mcpsr.Spec.CredentialRef.Name,
+// 				Namespace: mcpsr.Namespace,
+// 			}, secret)
+// 			if err != nil {
+// 				log.Error(err, "failed to read credential secret")
+// 				continue
+// 			}
+// 			val, ok := secret.Data[mcpsr.Spec.CredentialRef.Key]
+// 			if !ok {
+// 				// no key log and continue
+// 				log.V(1).Info("the secret had no key ", "specified key", mcpsr.Spec.CredentialRef.Key)
+// 				continue
+// 			}
+// 			serverConfig.Credential = string(val)
 
-	httpRoute := &gatewayv1.HTTPRoute{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      targetRef.Name,
-		Namespace: namespace,
-	}, httpRoute)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil, fmt.Errorf("HTTPRoute %s/%s not found", namespace, targetRef.Name)
-		}
-		return nil, fmt.Errorf(
-			"failed to get HTTPRoute %s/%s: %w",
-			namespace,
-			targetRef.Name,
-			err,
-		)
-	}
+// 		}
+
+// 		servers = append(servers, serverConfig)
+
+// 	}
+
+// 	if err := r.ConfigReaderWriter.WriteMCPServerConfig(ctx, servers, config.DefaultNamespaceName); err != nil {
+
+// 		log.Error(err, "Failed to write aggregated configuration")
+// 		return err
+// 	}
+
+// 	log.V(1).Info("Successfully regenerated aggregated configuration", "serverCount", len(servers))
+
+// 	if err := r.cleanupOrphanedHTTPRoutes(ctx, referencedHTTPRoutes); err != nil {
+// 		log.Error(err, "Failed to cleanup orphaned HTTPRoute conditions")
+// 		return err
+// 	}
+
+// 	return nil
+// }
+
+func (r *MCPReconciler) buildServerInfoFromHTTPRoute(ctx context.Context, httpRoute *gatewayv1.HTTPRoute, path string) (*ServerInfo, error) {
 
 	if len(httpRoute.Spec.Rules) == 0 || len(httpRoute.Spec.Rules[0].BackendRefs) == 0 {
-		return nil, fmt.Errorf(
-			"HTTPRoute %s/%s has no backend references",
-			namespace,
-			targetRef.Name,
-		)
+		return nil, fmt.Errorf("HTTPRoute %s/%s has no backend references", httpRoute.Namespace, httpRoute.Name)
 	}
 
 	if len(httpRoute.Spec.Rules) > 1 {
 		return nil, fmt.Errorf(
-			"HTTPRoute %s/%s has > 1 rule, which is unsupported",
-			namespace,
-			targetRef.Name,
-		)
+			"HTTPRoute %s/%s has > 1 rule, which is unsupported", httpRoute.Namespace, httpRoute.Name)
 	}
 
 	if len(httpRoute.Spec.Rules[0].BackendRefs) > 1 {
-		return nil, fmt.Errorf(
-			"HTTPRoute %s/%s has > 1 backend reference, which is unsupported",
-			namespace,
-			targetRef.Name,
-		)
+		return nil, fmt.Errorf("HTTPRoute %s/%s has > 1 backend reference, which is unsupported", httpRoute.Namespace, httpRoute.Name)
 	}
 
 	backendRef := httpRoute.Spec.Rules[0].BackendRefs[0]
 	if backendRef.Name == "" {
-		return nil, fmt.Errorf("backend reference has no name")
+		return nil, fmt.Errorf("HTTPRoute %s/%s backend reference has no name", httpRoute.Namespace, httpRoute.Name)
 	}
 
 	kind := "Service"
@@ -469,7 +621,7 @@ func (r *MCPReconciler) discoverServersFromHTTPRoutes(
 	// handle Istio Hostname backendRef for external services
 	if kind == "Hostname" && group == "networking.istio.io" {
 		log.FromContext(ctx).V(1).Info("processing external service via Hostname backendRef", "host", backendRef.Name)
-		return r.buildServerInfoForHostnameBackend(httpRoute, mcpsr, backendRef, namespace, targetRef.Name)
+		return r.buildServerInfoForHostnameBackend(httpRoute, backendRef, path)
 	}
 
 	if kind != "Service" {
@@ -488,7 +640,7 @@ func (r *MCPReconciler) discoverServersFromHTTPRoutes(
 	isExternal := false
 
 	service := &corev1.Service{}
-	err = r.Get(ctx, types.NamespacedName{
+	err := r.Get(ctx, types.NamespacedName{
 		Name:      backendName,
 		Namespace: serviceNamespace,
 	}, service)
@@ -500,10 +652,7 @@ func (r *MCPReconciler) discoverServersFromHTTPRoutes(
 	// Extract hostname from HTTPRoute
 	if len(httpRoute.Spec.Hostnames) == 0 {
 		return nil, fmt.Errorf(
-			"HTTPRoute %s/%s must have at least one hostname for MCP backend routing",
-			namespace,
-			targetRef.Name,
-		)
+			"HTTPRoute %s/%s must have at least one hostname for MCP backend routing", httpRoute.Namespace, httpRoute.Name)
 	}
 	// use first hostname if multiple are present
 	hostname := string(httpRoute.Spec.Hostnames[0])
@@ -526,8 +675,6 @@ func (r *MCPReconciler) discoverServersFromHTTPRoutes(
 			nameAndEndpoint = serviceDNSName
 		}
 	}
-
-	toolPrefix := mcpsr.Spec.ToolPrefix
 
 	protocol := "http"
 	if httpRoute.Spec.ParentRefs != nil {
@@ -553,7 +700,6 @@ func (r *MCPReconciler) discoverServersFromHTTPRoutes(
 		}
 	}
 
-	path := mcpsr.Spec.Path
 	endpoint := fmt.Sprintf("%s://%s%s", protocol, nameAndEndpoint, path)
 
 	routingHostname := hostname
@@ -565,14 +711,12 @@ func (r *MCPReconciler) discoverServersFromHTTPRoutes(
 			routingHostname = nameAndEndpoint
 		}
 	}
-	id := serverID(httpRoute, mcpsr, hostname)
+
 	serverInfo := ServerInfo{
-		ID:                 id,
 		Endpoint:           endpoint,
 		Hostname:           routingHostname,
-		ToolPrefix:         toolPrefix,
-		HTTPRouteName:      targetRef.Name,
-		HTTPRouteNamespace: namespace,
+		HTTPRouteName:      httpRoute.Name,
+		HTTPRouteNamespace: httpRoute.Namespace,
 		Credential:         "",
 	}
 	return &serverInfo, nil
@@ -581,11 +725,11 @@ func (r *MCPReconciler) discoverServersFromHTTPRoutes(
 // buildServerInfoForHostnameBackend handles Istio Hostname backendRef for external services
 func (r *MCPReconciler) buildServerInfoForHostnameBackend(
 	httpRoute *gatewayv1.HTTPRoute,
-	mcpsr *mcpv1alpha1.MCPServerRegistration,
 	backendRef gatewayv1.HTTPBackendRef,
-	namespace string,
-	httpRouteName string,
+	path string,
 ) (*ServerInfo, error) {
+	namespace := httpRoute.Namespace
+	httpRouteName := httpRoute.Name
 	if len(httpRoute.Spec.Hostnames) == 0 {
 		return nil, fmt.Errorf("HTTPRoute %s/%s must have at least one hostname", namespace, httpRouteName)
 	}
@@ -600,15 +744,12 @@ func (r *MCPReconciler) buildServerInfoForHostnameBackend(
 		port = fmt.Sprintf("%d", *backendRef.Port)
 	}
 
-	path := mcpsr.Spec.Path
 	endpoint := fmt.Sprintf("https://%s%s", net.JoinHostPort(externalHost, port), path)
 	routingHostname := string(httpRoute.Spec.Hostnames[0])
 
 	return &ServerInfo{
-		ID:                 serverID(httpRoute, mcpsr, endpoint),
 		Endpoint:           endpoint,
 		Hostname:           routingHostname,
-		ToolPrefix:         mcpsr.Spec.ToolPrefix,
 		HTTPRouteName:      httpRouteName,
 		HTTPRouteNamespace: namespace,
 		Credential:         "",
@@ -627,14 +768,11 @@ func isValidHostname(hostname string) bool {
 	return u.Host == hostname
 }
 
-func (r *MCPReconciler) cleanupOrphanedHTTPRoutes(
-	ctx context.Context,
-	referencedHTTPRoutes map[string]struct{},
-) error {
+func (r *MCPReconciler) cleanupOrphanedHTTPRoutes(ctx context.Context, referencedHTTPRoutes map[string]struct{}) error {
 	log := log.FromContext(ctx)
 
 	httpRouteList := &gatewayv1.HTTPRouteList{}
-	if err := r.List(ctx, httpRouteList, client.MatchingFields{"status.hasProgrammedCondition": "true"}); err != nil {
+	if err := r.List(ctx, httpRouteList, client.MatchingFields{ProgrammedHTTPRouteIndex: "true"}); err != nil {
 		return fmt.Errorf("failed to list programmed HTTPRoutes: %w", err)
 	}
 
@@ -762,8 +900,8 @@ func (r *MCPReconciler) updateHTTPRouteStatus(
 	return nil
 }
 
-func serverID(httpRoute *gatewayv1.HTTPRoute, mcpsr *mcpv1alpha1.MCPServerRegistration, endpoint string) string {
-	return fmt.Sprintf("%s:%s:%s", fmt.Sprintf("%s/%s", httpRoute.Namespace, httpRoute.Name), mcpsr.Spec.ToolPrefix, endpoint)
+func serverID(httpRoute *gatewayv1.HTTPRoute, toolPrefix, endpoint string) string {
+	return fmt.Sprintf("%s:%s:%s", fmt.Sprintf("%s/%s", httpRoute.Namespace, httpRoute.Name), toolPrefix, endpoint)
 }
 
 func (r *MCPReconciler) updateStatus(
@@ -823,43 +961,17 @@ func (r *MCPReconciler) updateStatus(
 }
 
 // SetupWithManager sets up the reconciler
-func (r *MCPReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &mcpv1alpha1.MCPServerRegistration{}, "spec.targetRef.httproute", func(rawObj client.Object) []string {
-		mcpsr := rawObj.(*mcpv1alpha1.MCPServerRegistration)
-
-		targetRef := mcpsr.Spec.TargetRef
-		if targetRef.Kind == "HTTPRoute" {
-			namespace := targetRef.Namespace
-			if namespace == "" {
-				namespace = mcpsr.Namespace
-			}
-			return []string{fmt.Sprintf("%s/%s", namespace, targetRef.Name)}
-		}
-		return []string{}
-	}); err != nil {
-		return err
+func (r *MCPReconciler) SetupWithManager(mgr ctrl.Manager, ctx context.Context) error {
+	if err := setupIndexMCPRegisrtrationToHTTPRoute(ctx, mgr.GetFieldIndexer()); err != nil {
+		return fmt.Errorf("failed to setup required index from MCPServerRegistration to httproutes %w", err)
 	}
 
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &gatewayv1.HTTPRoute{}, "status.hasProgrammedCondition", func(rawObj client.Object) []string {
-		httpRoute := rawObj.(*gatewayv1.HTTPRoute)
-		for _, parentStatus := range httpRoute.Status.Parents {
-			for _, condition := range parentStatus.Conditions {
-				if condition.Type == "Programmed" && condition.Status == metav1.ConditionTrue {
-					return []string{"true"}
-				}
-			}
-		}
-		return []string{"false"}
-	}); err != nil {
-		return err
+	if err := setupIndexProgrammedHTTPRoutes(ctx, mgr.GetFieldIndexer()); err != nil {
+		return fmt.Errorf("failed to setup required index for programmed httproutes %w", err)
 	}
 
 	controller := ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1alpha1.MCPServerRegistration{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		Watches(
-			&mcpv1alpha1.MCPVirtualServer{},
-			&handler.EnqueueRequestForObject{},
-		).
 		Watches(
 			&gatewayv1.HTTPRoute{},
 			handler.EnqueueRequestsFromMapFunc(r.findMCPServerRegistrationsForHTTPRoute),
@@ -873,6 +985,11 @@ func (r *MCPReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				secret := obj.(*corev1.Secret)
 				return secret.Labels != nil && secret.Labels[CredentialSecretLabel] == CredentialSecretValue
 			})),
+		).
+		Watches(
+			&mcpv1alpha1.MCPGatewayExtension{},
+			handler.EnqueueRequestsFromMapFunc(r.findMCPServerRegistrationsForMCPGatewayExtension),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		)
 
 	// Perform startup reconciliation to ensure config exists even with zero MCPServerRegistrations
@@ -883,14 +1000,53 @@ func (r *MCPReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return controller.Complete(r)
 }
 
+func httpRouteIndexValue(namespace, name string) string {
+	return fmt.Sprintf("%s/%s", namespace, name)
+}
+
+func setupIndexProgrammedHTTPRoutes(ctx context.Context, indexer client.FieldIndexer) error {
+	if err := indexer.IndexField(ctx, &gatewayv1.HTTPRoute{}, ProgrammedHTTPRouteIndex, func(rawObj client.Object) []string {
+		httpRoute := rawObj.(*gatewayv1.HTTPRoute)
+		for _, parentStatus := range httpRoute.Status.Parents {
+			for _, condition := range parentStatus.Conditions {
+				if condition.Type == "Programmed" && condition.Status == metav1.ConditionTrue {
+					return []string{"true"}
+				}
+			}
+		}
+		return []string{"false"}
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func setupIndexMCPRegisrtrationToHTTPRoute(ctx context.Context, indexer client.FieldIndexer) error {
+	if err := indexer.IndexField(ctx, &mcpv1alpha1.MCPServerRegistration{}, HTTPRouteIndex, func(rawObj client.Object) []string {
+		mcpsr := rawObj.(*mcpv1alpha1.MCPServerRegistration)
+		targetRef := mcpsr.Spec.TargetRef
+		if targetRef.Kind == "HTTPRoute" {
+			namespace := targetRef.Namespace
+			if namespace == "" {
+				namespace = mcpsr.Namespace
+			}
+			return []string{httpRouteIndexValue(namespace, targetRef.Name)}
+		}
+		return []string{}
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
 // findMCPServerRegistrationsForHTTPRoute finds all MCPServerRegistrations that reference the given HTTPRoute
 func (r *MCPReconciler) findMCPServerRegistrationsForHTTPRoute(ctx context.Context, obj client.Object) []reconcile.Request {
 	httpRoute := obj.(*gatewayv1.HTTPRoute)
 	log := log.FromContext(ctx).WithValues("HTTPRoute", httpRoute.Name, "namespace", httpRoute.Namespace)
 
-	indexKey := fmt.Sprintf("%s/%s", httpRoute.Namespace, httpRoute.Name)
+	indexKey := httpRouteIndexValue(httpRoute.Namespace, httpRoute.Name)
 	mcpsrList := &mcpv1alpha1.MCPServerRegistrationList{}
-	if err := r.List(ctx, mcpsrList, client.MatchingFields{"spec.targetRef.httproute": indexKey}); err != nil {
+	if err := r.List(ctx, mcpsrList, client.MatchingFields{HTTPRouteIndex: indexKey}); err != nil {
 		log.Error(err, "Failed to list MCPServerRegistrations using index")
 		return nil
 	}
@@ -918,7 +1074,7 @@ func (r *MCPReconciler) validateCredentialSecret(ctx context.Context, mcpsr *mcp
 	}
 
 	secret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{
+	err := r.DirectAPIReader.Get(ctx, types.NamespacedName{
 		Name:      mcpsr.Spec.CredentialRef.Name,
 		Namespace: mcpsr.Namespace,
 	}, secret)
@@ -959,11 +1115,12 @@ func (r *MCPReconciler) findMCPServerRegistrationsForSecret(ctx context.Context,
 		log.Error(err, "Failed to list MCPServerRegistrations")
 		return nil
 	}
-
+	log.Info("findMCPServerRegistrationsForSecret", "total mcpserverregistrations", len(mcpsrList.Items))
 	var requests []reconcile.Request
 	for _, mcpsr := range mcpsrList.Items {
 		// check if references this secret
 		if mcpsr.Spec.CredentialRef != nil && mcpsr.Spec.CredentialRef.Name == secret.Name {
+			log.Info("findMCPServerRegistrationsForSecret", "requeue", mcpsr.Name)
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      mcpsr.Name,
@@ -978,6 +1135,73 @@ func (r *MCPReconciler) findMCPServerRegistrationsForSecret(ctx context.Context,
 	return requests
 }
 
+// findMCPServerRegistrationsForMCPGatewayExtension finds all MCPServerRegistrations whose HTTPRoutes
+// are attached to the Gateway targeted by the given MCPGatewayExtension. When an MCPGatewayExtension
+// changes (created, updated, deleted), the associated MCPServerRegistrations need to be reconciled
+// to ensure their config is written to the correct namespaces.
+func (r *MCPReconciler) findMCPServerRegistrationsForMCPGatewayExtension(ctx context.Context, obj client.Object) []reconcile.Request {
+	mcpExt := obj.(*mcpv1alpha1.MCPGatewayExtension)
+	logger := log.FromContext(ctx).WithValues("MCPGatewayExtension", mcpExt.Name, "namespace", mcpExt.Namespace)
+
+	// get the gateway this extension targets
+	gatewayNamespace := mcpExt.Spec.TargetRef.Namespace
+	if gatewayNamespace == "" {
+		gatewayNamespace = mcpExt.Namespace
+	}
+	gateway := &gatewayv1.Gateway{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      mcpExt.Spec.TargetRef.Name,
+		Namespace: gatewayNamespace,
+	}, gateway); err != nil {
+		if !errors.IsNotFound(err) {
+			logger.Error(err, "Failed to get Gateway for MCPGatewayExtension")
+		}
+		return nil
+	}
+
+	// find all HTTPRoutes that have this gateway as a parent
+	httpRouteList := &gatewayv1.HTTPRouteList{}
+	if err := r.List(ctx, httpRouteList); err != nil {
+		logger.Error(err, "Failed to list HTTPRoutes")
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, httpRoute := range httpRouteList.Items {
+		// check if this HTTPRoute references the gateway
+		for _, parentRef := range httpRoute.Spec.ParentRefs {
+			parentNs := httpRoute.Namespace
+			if parentRef.Namespace != nil {
+				parentNs = string(*parentRef.Namespace)
+			}
+			if string(parentRef.Name) == gateway.Name && parentNs == gateway.Namespace {
+				// find MCPServerRegistrations targeting this HTTPRoute
+				indexKey := httpRouteIndexValue(httpRoute.Namespace, httpRoute.Name)
+				mcpsrList := &mcpv1alpha1.MCPServerRegistrationList{}
+				if err := r.List(ctx, mcpsrList, client.MatchingFields{HTTPRouteIndex: indexKey}); err != nil {
+					logger.Error(err, "Failed to list MCPServerRegistrations for HTTPRoute",
+						"HTTPRoute", httpRoute.Name, "namespace", httpRoute.Namespace)
+					continue
+				}
+				for _, mcpsr := range mcpsrList.Items {
+					logger.V(1).Info("Enqueueing MCPServerRegistration due to MCPGatewayExtension change",
+						"MCPServerRegistration", mcpsr.Name, "namespace", mcpsr.Namespace)
+					requests = append(requests, reconcile.Request{
+						NamespacedName: types.NamespacedName{
+							Name:      mcpsr.Name,
+							Namespace: mcpsr.Namespace,
+						},
+					})
+				}
+				break
+			}
+		}
+	}
+
+	logger.V(1).Info("Found MCPServerRegistrations for MCPGatewayExtension", "count", len(requests))
+	return requests
+}
+
 // startupReconciler ensures initial configuration is written even with zero MCPServerRegistrations
 type startupReconciler struct {
 	reconciler *MCPReconciler
@@ -988,10 +1212,10 @@ func (s *startupReconciler) Start(ctx context.Context) error {
 	log := log.FromContext(ctx).WithName("startup-reconciler")
 	log.Info("Running startup reconciliation to ensure config exists")
 
-	if _, err := s.reconciler.regenerateAggregatedConfig(ctx); err != nil {
-		log.Error(err, "Failed to run startup reconciliation")
-		return err
-	}
+	// if err := s.reconciler.regenerateAggregatedConfig(ctx); err != nil {
+	// 	log.Error(err, "Failed to run startup reconciliation")
+	// 	return err
+	// }
 
 	log.Info("Startup reconciliation completed successfully")
 	return nil

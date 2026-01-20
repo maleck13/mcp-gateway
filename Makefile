@@ -37,11 +37,11 @@ help: ## Display this help
 
 # Build the combined broker and router
 mcp-broker-router:
-	go build -o bin/mcp-broker-router ./cmd/mcp-broker-router
+	go build -race -o bin/mcp-broker-router ./cmd/mcp-broker-router
 
 # Build the controller
 controller:
-	go build -o bin/mcp-controller ./cmd
+	go build -race -o bin/mcp-controller ./cmd
 
 # Build all binaries
 build: mcp-broker-router controller
@@ -268,8 +268,9 @@ define reload-image
 endef
 
 .PHONY: reload-controller
-reload-controller: build docker-build kind ## Build, load to Kind, and restart controller
-	$(call reload-image)
+reload-controller: build kind ## Build, load to Kind, and restart controller
+	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) --file Dockerfile.controller -t ghcr.io/kuadrant/mcp-controller:latest .	
+	$(call load-image,ghcr.io/kuadrant/mcp-gateway:latest)	
 	@kubectl rollout restart -n mcp-system deployment/mcp-controller
 	@kubectl rollout status -n mcp-system deployment/mcp-controller --timeout=60s
 
@@ -402,7 +403,7 @@ fix-newlines:
 
 
 test-unit:
-	go test ./...
+	go test -race ./...
 
 .PHONY: test-controller-integration
 test-controller-integration: envtest gateway-api-crds ## Run controller integration tests
@@ -547,7 +548,7 @@ logs: ## Tail Istio gateway logs
 
 .PHONY: testwithcoverage
 testwithcoverage:
-	go test ./... -coverprofile=coverage.out
+	go test -race ./... -coverprofile=coverage.out
 
 .PHONY: coverage
 coverage: testwithcoverage

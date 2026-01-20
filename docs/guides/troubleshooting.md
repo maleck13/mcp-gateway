@@ -125,6 +125,58 @@ kubectl exec -n gateway-system deploy/mcp-gateway-istio -- curl localhost:15000/
 - Verify broker service name and namespace in `grpc_service` configuration
 - Restart Istio gateway to force config reload: `kubectl rollout restart deployment/mcp-gateway-istio -n gateway-system`
 
+## MCPGatewayExtension Issues
+
+### MCPGatewayExtension Not Ready
+
+**Symptom**: MCPGatewayExtension shows `Ready: False` status
+
+```bash
+# Check MCPGatewayExtension status
+kubectl get mcpgatewayextension -A
+kubectl describe mcpgatewayextension <name> -n <namespace>
+```
+
+**Common Reasons**:
+
+- **ReferenceGrantRequired**: The MCPGatewayExtension targets a Gateway in a different namespace but no ReferenceGrant exists
+- **InvalidMCPGatewayExtension**: The target Gateway doesn't exist, or another MCPGatewayExtension already targets this Gateway
+
+**Solutions**:
+- For cross-namespace references, create a ReferenceGrant in the Gateway's namespace:
+  ```bash
+  kubectl apply -f - <<EOF
+  apiVersion: gateway.networking.k8s.io/v1beta1
+  kind: ReferenceGrant
+  metadata:
+    name: allow-mcp-extension
+    namespace: <gateway-namespace>
+  spec:
+    from:
+      - group: mcp.kagenti.com
+        kind: MCPGatewayExtension
+        namespace: <mcpgatewayextension-namespace>
+    to:
+      - group: gateway.networking.k8s.io
+        kind: Gateway
+  EOF
+  ```
+- Verify the target Gateway exists: `kubectl get gateway -n <gateway-namespace>`
+- Check for conflicting MCPGatewayExtensions: `kubectl get mcpgatewayextension -A`
+
+### MCPServerRegistration Shows NotReady - No Valid MCPGatewayExtension
+
+**Symptom**: MCPServerRegistration has condition `Ready: False` with message about no valid MCPGatewayExtension
+
+```bash
+kubectl describe mcpsr <name> -n <namespace>
+```
+
+**Solutions**:
+- Verify an MCPGatewayExtension exists in the same namespace as the MCPServerRegistration
+- Ensure the MCPGatewayExtension targets the Gateway that the HTTPRoute is attached to
+- Check the MCPGatewayExtension is in Ready state: `kubectl get mcpgatewayextension -n <namespace>`
+
 ## MCP Server Configuration Issues
 
 ### MCP Server Not Discovered

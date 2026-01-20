@@ -10,7 +10,63 @@ You must register your MCP servers to be discovered and routed by the MCP Gatewa
 
 ## Procedure
 
-### Step 1: Create HTTPRoute for Your MCP Server
+To connect an MCP server to MCP Gateway, you need:
+1. An MCPGatewayExtension resource that targets your Gateway
+2. A ReferenceGrant if the MCPGatewayExtension is in a different namespace than the Gateway
+3. An HTTPRoute that routes to your MCP server
+4. An MCPServerRegistration resource that references the HTTPRoute
+
+The MCPGatewayExtension tells the controller which Gateway this MCP Gateway instance serves. Without it, MCPServerRegistration resources will remain in NotReady status.
+
+## Step 1: Create MCPGatewayExtension
+
+First, create an MCPGatewayExtension to enable MCP Gateway for your Gateway. The MCPGatewayExtension must be in the same namespace as your MCP Gateway broker/router deployment.
+
+If the Gateway is in a different namespace, create a ReferenceGrant first:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-mcp-extension
+  namespace: gateway-system  # Gateway's namespace
+spec:
+  from:
+    - group: mcp.kagenti.com
+      kind: MCPGatewayExtension
+      namespace: mcp-test  # MCPGatewayExtension's namespace
+  to:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+EOF
+```
+
+Then create the MCPGatewayExtension:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: mcp.kagenti.com/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: mcp-extension
+  namespace: mcp-test
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    namespace: gateway-system
+EOF
+```
+
+Wait for it to become ready:
+
+```bash
+kubectl wait --for=condition=Ready mcpgatewayextension/mcp-extension -n mcp-test --timeout=60s
+```
+
+Skip the ReferenceGrant if the MCPGatewayExtension is in the same namespace as the Gateway.
 
 Create an `HTTPRoute` that routes to your MCP server:
 

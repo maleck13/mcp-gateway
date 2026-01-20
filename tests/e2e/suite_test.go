@@ -16,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -23,8 +24,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+)
+
+const (
+	// shared fixtures for e2e tests
+	GatewayNamespace   = "gateway-system"
+	GatewayName        = "mcp-gateway"
+	MCPExtensionName   = "e2e-mcp-extension"
+	ReferenceGrantName = "allow-mcp-extensions"
 )
 
 var (
@@ -51,6 +61,7 @@ var _ = BeforeSuite(func() {
 	Expect(scheme.AddToScheme(testScheme)).To(Succeed())
 	Expect(mcpv1alpha1.AddToScheme(testScheme)).To(Succeed())
 	Expect(gatewayapiv1.Install(testScheme)).To(Succeed())
+	Expect(gatewayv1beta1.Install(testScheme)).To(Succeed())
 	Expect(istionetv1beta1.AddToScheme(testScheme)).To(Succeed())
 
 	By("Getting kubeconfig")
@@ -92,7 +103,6 @@ var _ = BeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred(), "all existing MCPSevers should be removed before the e2e test suite")
 
 	By("setting up an mcp client for the gateway")
-	Expect(err).To(BeNil())
 	mcpGatewayClient, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {})
 	Expect(err).Error().NotTo(HaveOccurred())
 
@@ -104,6 +114,24 @@ var _ = AfterSuite(func() {
 		GinkgoWriter.Println("closing client")
 		mcpGatewayClient.Close()
 	}
+
+	By("cleaning up MCPGatewayExtension")
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: MCPExtensionName, Namespace: SystemNamespace}, mcpExt); err == nil {
+		// remove finalizer if present
+		if len(mcpExt.Finalizers) > 0 {
+			mcpExt.Finalizers = nil
+			_ = k8sClient.Update(ctx, mcpExt)
+		}
+		_ = k8sClient.Delete(ctx, mcpExt)
+	}
+
+	By("cleaning up ReferenceGrant")
+	refGrant := &gatewayv1beta1.ReferenceGrant{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: ReferenceGrantName, Namespace: GatewayNamespace}, refGrant); err == nil {
+		_ = k8sClient.Delete(ctx, refGrant)
+	}
+
 	if cancel != nil {
 		cancel()
 	}

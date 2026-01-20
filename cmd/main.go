@@ -19,8 +19,6 @@ This package contains the main of the mcp controller
 package main
 
 import (
-	"fmt"
-
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -31,6 +29,7 @@ import (
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/controller"
 )
 
@@ -43,28 +42,57 @@ func init() {
 func main() {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 	ctrl.Log.Info("Controller starting (health: :8081, metrics: :8082)...")
+	ctx := ctrl.SetupSignalHandler()
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme.Scheme,
 		Metrics:                metricsserver.Options{BindAddress: ":8082"},
 		LeaderElection:         false,
 		HealthProbeBindAddress: ":8081",
+		//TODO look at adding this type of filtering
+		// Cache: cache.Options{
+		// 	ByObject: map[client.Object]cache.ByObject{
+		// 		&v1.Secret{}: {
+		// 			Label: labels.SelectorFromSet(labels.Set{
+		// 				"mcp.kagenti.com/credential": "true",
+		// 			}),
+		// 		},
+		// 	},
+		// },
 	})
 	if err != nil {
 		panic("unable to start manager : " + err.Error())
 	}
 
+	configReaderWriter := config.SecretReaderWriter{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Logger: &ctrl.Log,
+	}
+
 	if err = (&controller.MCPReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		APIReader: mgr.GetAPIReader(),
-	}).SetupWithManager(mgr); err != nil {
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		DirectAPIReader:    mgr.GetAPIReader(),
+		ConfigReaderWriter: &configReaderWriter,
+	}).SetupWithManager(mgr, ctx); err != nil {
 		panic("unable to start manager : " + err.Error())
 	}
 
 	if err = (&controller.MCPGatewayExtensionReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		DirectAPIReader:     mgr.GetAPIReader(),
+		ConfigWriterDeleter: &configReaderWriter,
+	}).SetupWithManager(ctx, mgr); err != nil {
+		panic("unable to start manager : " + err.Error())
+	}
+
+	if err = (&controller.MCPVirtualServerReconciler{
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		DirectAPIReader:    mgr.GetAPIReader(),
+		ConfigReaderWriter: &configReaderWriter,
+	}).SetupWithManager(ctx, mgr); err != nil {
 		panic("unable to start manager : " + err.Error())
 	}
 
@@ -75,8 +103,7 @@ func main() {
 		panic("unable to start manager : " + err.Error())
 	}
 
-	fmt.Println("Starting controller manager...")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		panic("unable to start manager : " + err.Error())
 	}
 }
