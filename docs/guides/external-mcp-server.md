@@ -12,7 +12,7 @@ Clients call your Gateway's hostname, and the Gateway rewrites and routes traffi
 - Authentication credentials for the external server (if required)
 - **MCPGatewayExtension** targeting the Gateway (required for MCPServerRegistration to work)
 
-**Note:** If you're trying this locally, `make local-env-setup` already meets all prerequisites except the GitHub PAT. The setup script creates the MCPGatewayExtension automatically.
+**Note:** If you're trying this locally, `make local-env-setup` already meets all prerequisites except the GitHub PAT.
 
 If you haven't created an MCPGatewayExtension yet, see [Configure MCP Servers](./configure-mcp-servers.md#step-0-create-mcpgatewayextension) for instructions.
 

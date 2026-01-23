@@ -1,14 +1,16 @@
 # Isolated MCP Gateway Deployment
 
-This guide demonstrates how to deploy MCP Gateway instances for your environment. Each deployment maintains its own configuration based on the MCPGatewayExtension resource that defines which Gateway it serves.
+This guide demonstrates how to deploy MCP Gateway instances for your environment. Each deployment is given its own configuration for which MCP Servers to manage based on the MCPGatewayExtension resource that defines which Gateway it expects request from.
+
+This guide assumes some knowledge about configuring an MCPServerRegistration. You can find more information in the following guide [register-mcp-servers](./register-mcp-servers.md).
 
 ## Overview
 
-The MCP Gateway controller requires an `MCPGatewayExtension` resource to operate. This resource:
+The MCP Gateway requires an `MCPGatewayExtension` resource to operate. This resource:
 
 - Defines which Gateway the MCP Gateway instance is responsible for
 - Determines where configuration secrets are created (same namespace as the MCPGatewayExtension)
-- Enables isolation by allowing multiple MCP Gateway instances to target different Gateways
+- Enables isolation by allowing multiple MCP Gateway instances (in different namespaces) to target different Gateways
 
 MCPServerRegistration resources are only processed when a valid MCPGatewayExtension exists for the Gateway their HTTPRoute is attached to. Without a matching MCPGatewayExtension, registrations will show a NotReady status.
 
@@ -41,7 +43,7 @@ MCPServerRegistration resources are only processed when a valid MCPGatewayExtens
 └───────────────────────────────┘     └───────────────────────────────┘
 ```
 
-Each MCPGatewayExtension targets a different Gateway. The controller creates configuration secrets in the same namespace as the MCPGatewayExtension, which are mounted into the broker/router deployments.
+Each MCPGatewayExtension targets a different Gateway. The controller creates configuration secrets in the same namespace(s) as valid MCPGatewayExtension(s), which are mounted into the broker/router deployments.
 
 For cross-namespace Gateway references, a ReferenceGrant must exist in the Gateway's namespace.
 
@@ -119,6 +121,8 @@ kubectl wait --for=condition=Ready mcpgatewayextension/team-alpha-gateway -n tea
 
 Deploy the broker and router into the team's namespace:
 
+>Note: the MCP Gateway Instance **MUST** be in the same namespace as a MCPGatewayExtension resource. 
+
 ```bash
 helm install mcp-gateway ./charts/mcp-gateway \
   --namespace team-alpha \
@@ -133,7 +137,11 @@ The Helm chart creates:
 - EnvoyFilter to route traffic to this instance
 - ServiceAccount and RBAC
 
+
+
 ## Step 6: Register MCP Servers
+
+> Note: this assumes you have created a HTTPRoute name `alpha-server-route`
 
 Create MCPServerRegistration resources in the team's namespace. The controller will automatically add their configuration to the team's config secret:
 
@@ -157,22 +165,16 @@ The MCPServerRegistration must target an HTTPRoute that is attached to a Gateway
 
 ## Verification
 
+Wait for the MCPServerRegistration to become ready:
+
+```bash
+kubectl wait --for=condition=Ready mcpserverregistration/team-alpha-server -n team-alpha --timeout=60s
+```
+
 Check that the configuration secret was created:
 
 ```bash
 kubectl get secret mcp-gateway-config -n team-alpha
-```
-
-View the configuration:
-
-```bash
-kubectl get secret mcp-gateway-config -n team-alpha -o jsonpath='{.data.config\.yaml}' | base64 -d
-```
-
-Check broker logs for tool discovery:
-
-```bash
-kubectl logs -n team-alpha deployment/mcp-gateway-broker | grep "Discovered"
 ```
 
 ## Multiple Teams Example
@@ -250,8 +252,6 @@ Each team now has their own isolated MCP Gateway instance targeting separate Gat
 
 **One MCPGatewayExtension per Gateway**: Only one MCPGatewayExtension can target a given Gateway. If multiple extensions target the same Gateway, the controller marks newer ones as conflicted. The oldest extension (by creation timestamp) wins.
 
-**Same-namespace MCPServerRegistrations**: MCPServerRegistration resources must be in the same namespace as the MCPGatewayExtension. The controller uses the MCPGatewayExtension's namespace to determine where to write the configuration.
-
 ## Troubleshooting
 
 ### MCPGatewayExtension shows RefGrantRequired
@@ -275,17 +275,9 @@ Create the ReferenceGrant in the Gateway's namespace as shown in Step 3.
 
 ### MCPGatewayExtension shows InvalidMCPGatewayExtension
 
-The target Gateway doesn't exist or there's a conflict:
+The target Gateway doesn't exist or there's a conflict.
 
-```bash
-kubectl get gateway -n gateway-system
-```
-
-If another MCPGatewayExtension already targets this Gateway, check which one is older:
-
-```bash
-kubectl get mcpgatewayextension -A -o custom-columns=NAME:.metadata.name,NAMESPACE:.metadata.namespace,CREATED:.metadata.creationTimestamp
-```
+check if there is another MCPGatewayExtension that is older that is also targeting the Gateway.
 
 ### MCPServerRegistration shows NotReady
 
@@ -296,8 +288,8 @@ kubectl get mcpserverregistration -n team-alpha -o yaml
 ```
 
 Check that:
-1. The HTTPRoute exists and references the correct Gateway
-2. An MCPGatewayExtension exists in the same namespace targeting that Gateway
+1. The HTTPRoute exists and references the correct Gateway and its status is accepted
+2. An MCPGatewayExtension exists targeting that Gateway
 3. The MCPGatewayExtension is in Ready state
 
 ### No configuration in secret
