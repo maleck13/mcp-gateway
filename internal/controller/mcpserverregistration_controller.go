@@ -66,8 +66,6 @@ type ServerInfo struct {
 }
 
 type MCPServerConfigReaderWriter interface {
-	WriteMCPServerConfig(ctx context.Context, servers []config.MCPServer, namespaceName types.NamespacedName) error
-	WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error
 	UpsertMCPServer(ctx context.Context, server config.MCPServer, namespaceName types.NamespacedName) error
 	// RemoveMCPServer removes a server from all config secrets cluster-wide
 	RemoveMCPServer(ctx context.Context, serverName string) error
@@ -439,7 +437,7 @@ func (r *MCPReconciler) setMCPServerRegistrationStatus(ctx context.Context, mcps
 			log.Error(err, "Failed to update HTTPRoute status")
 		}
 		if !gatewayServerStatus.Ready {
-			return fmt.Errorf(message)
+			return fmt.Errorf("%s", message)
 		}
 		log.V(1).Info("server is ready")
 		return nil
@@ -450,7 +448,7 @@ func (r *MCPReconciler) setMCPServerRegistrationStatus(ctx context.Context, mcps
 		return err
 	}
 
-	return fmt.Errorf(message)
+	return fmt.Errorf("%s", message)
 }
 
 func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *gatewayv1.HTTPRoute, mcpsr *mcpv1alpha1.MCPServerRegistration) (*config.MCPServer, error) {

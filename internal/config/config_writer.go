@@ -53,6 +53,8 @@ type SecretReaderWriter struct {
 // DefaultNamespaceName is the default location for the MCP Gateway config secret.
 var DefaultNamespaceName = types.NamespacedName{Namespace: "mcp-system", Name: "mcp-gateway-config"}
 
+// ConfigNamespaceName returns the NamespacedName for the config secret in the given namespace.
+// The secret name is always "mcp-gateway-config".
 func ConfigNamespaceName(ns string) types.NamespacedName {
 	return types.NamespacedName{Namespace: ns, Name: "mcp-gateway-config"}
 }
@@ -78,27 +80,6 @@ func (srw *SecretReaderWriter) WriteVirtualServerConfig(ctx context.Context, vir
 		updated, err := yaml.Marshal(existingConfig)
 		if err != nil {
 			return fmt.Errorf("mcpvirtualserver failed to marshal config: %w", err)
-		}
-
-		backingSecret.StringData[configFileName] = string(updated)
-		return srw.Client.Update(ctx, backingSecret)
-	})
-}
-
-// WriteMCPServerConfig updates the servers section of the config secret.
-// It uses a read-modify-write pattern to preserve the virtualServers section while
-// updating servers. Automatically retries on conflict errors caused by concurrent updates.
-func (srw *SecretReaderWriter) WriteMCPServerConfig(ctx context.Context, mcpServers []MCPServer, namespaceName types.NamespacedName) error {
-	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		existingConfig, backingSecret, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
-		if err != nil {
-			return fmt.Errorf("mcpserverregistration failed to read config secret: %w", err)
-		}
-
-		existingConfig.Servers = mcpServers
-		updated, err := yaml.Marshal(existingConfig)
-		if err != nil {
-			return fmt.Errorf("mcpserverregistration failed to marshal config: %w", err)
 		}
 
 		backingSecret.StringData[configFileName] = string(updated)
@@ -265,13 +246,6 @@ func (srw *SecretReaderWriter) RemoveMCPServer(ctx context.Context, serverName s
 	return lastErr
 }
 
-// WriteEmptyConfig writes an empty config (no servers, no virtualServers) to the secret.
-// This is useful when all MCPServerRegistrations have been deleted.
-func (srw *SecretReaderWriter) WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error {
-	srw.Logger.Info("SecretReaderWritier WriteEmptyConfig")
-	return srw.WriteMCPServerConfig(ctx, []MCPServer{}, namespaceName)
-}
-
 // DeleteConfig deletes the entire config secret. If the secret doesn't exist,
 // this is a no-op and returns nil.
 func (srw *SecretReaderWriter) DeleteConfig(ctx context.Context, namespaceName types.NamespacedName) error {
@@ -298,12 +272,4 @@ func (srw *SecretReaderWriter) DeleteConfig(ctx context.Context, namespaceName t
 func (srw *SecretReaderWriter) EnsureConfigExists(ctx context.Context, namespaceName types.NamespacedName) error {
 	_, _, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
 	return err
-}
-
-// NewSecretWriter creates a new SecretReaderWriter with the given Kubernetes client and scheme.
-func NewSecretWriter(client client.Client, scheme *runtime.Scheme) *SecretReaderWriter {
-	return &SecretReaderWriter{
-		Client: client,
-		Scheme: scheme,
-	}
 }

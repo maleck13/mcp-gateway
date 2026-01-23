@@ -37,14 +37,6 @@ func newMockMCPServerConfigReaderWriter() *mockMCPServerConfigReaderWriter {
 	}
 }
 
-func (m *mockMCPServerConfigReaderWriter) WriteMCPServerConfig(ctx context.Context, servers []config.MCPServer, namespaceName types.NamespacedName) error {
-	return nil
-}
-
-func (m *mockMCPServerConfigReaderWriter) WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error {
-	return nil
-}
-
 func (m *mockMCPServerConfigReaderWriter) UpsertMCPServer(ctx context.Context, server config.MCPServer, namespaceName types.NamespacedName) error {
 	key := fmt.Sprintf("%s/%s", namespaceName.Namespace, server.Name)
 	m.upsertedServers[key] = server
