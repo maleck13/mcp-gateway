@@ -54,6 +54,9 @@ const (
 	labelExtensionName      = "mcp.kagenti.com/extension-name"
 	labelExtensionNamespace = "mcp.kagenti.com/extension-namespace"
 	labelIstioRev           = "istio.io/rev"
+
+	// annotation to disable the ext_proc router and remove EnvoyFilter (use with Wasm router)
+	annotationDisableRouter = "kuadrant.io/disable-router"
 )
 
 func brokerRouterLabels() map[string]string {
@@ -202,8 +205,16 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, mcpv1alpha1.ConditionReasonDeploymentNotReady, "broker-router deployment is not ready")
 	}
 
-	if err := r.reconcileEnvoyFilter(ctx, mcpExt, targetGateway); err != nil {
-		return ctrl.Result{}, err
+	// delete EnvoyFilter if router is disabled (for use with Wasm router), otherwise reconcile it
+	if mcpExt.Annotations != nil && mcpExt.Annotations[annotationDisableRouter] == "true" {
+		r.log.Info("deleting EnvoyFilter due to disabled router", "annotation", annotationDisableRouter)
+		if err := r.deleteEnvoyFilter(ctx, mcpExt); err != nil {
+			return ctrl.Result{}, err
+		}
+	} else {
+		if err := r.reconcileEnvoyFilter(ctx, mcpExt, targetGateway); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionTrue, mcpv1alpha1.ConditionReasonSuccess, "successfully verified and configured")
