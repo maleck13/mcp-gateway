@@ -1,0 +1,20 @@
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: wasm-test-init
+          image: ghcr.io/kuadrant/mcp-gateway/wasm-test:latest
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c', 'cp /plugin.wasm /wasm/wasm-test.wasm']
+          volumeMounts:
+            - name: wasm-plugins
+              mountPath: /wasm
+      containers:
+        - name: istio-proxy
+          volumeMounts:
+            - name: wasm-plugins
+              mountPath: /etc/envoy
+              readOnly: true
+      volumes:
+        - name: wasm-plugins
+          emptyDir: {}

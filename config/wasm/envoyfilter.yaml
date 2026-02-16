@@ -1,0 +1,53 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: mcp-wasm-router
+  namespace: gateway-system
+spec:
+  workloadSelector:
+    labels:
+      gateway.io/name: mcp-gateway
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          portNumber: 8080
+          filterChain:
+            filter:
+              name: 'envoy.filters.network.http_connection_manager'
+              subFilter:
+                name: 'envoy.filters.http.router'
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.wasm
+          typed_config:
+            '@type': type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
+            config:
+              name: mcp-routing
+              root_id: mcp_routing
+              # allow header buffering until body is processed
+              # requires Envoy 1.35.0+
+              allow_on_headers_stop_iteration: true
+              configuration:
+                '@type': type.googleapis.com/google.protobuf.StringValue
+                value: |
+                  {
+                    "brokerHostname": "mcp.127-0-0-1.sslip.io",
+                    "brokerInternalHost": "mcp-gateway-istio.gateway-system.svc.cluster.local",
+                    "brokerPath": "/mcp",
+                    "routerAPIKey": "",
+                    "servers": {
+                      "mcp-test/test-server1": {
+                        "hostname": "server1.mcp.local",
+                        "path": "/mcp",
+                        "toolPrefix": "test1_"
+                      }
+                    }
+                  }
+              vm_config:
+                runtime: envoy.wasm.runtime.v8
+                code:
+                  local:
+                    filename: /etc/envoy/mcp-routing.wasm

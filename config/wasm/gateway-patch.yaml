@@ -1,0 +1,22 @@
+# Patch for the Istio gateway deployment to mount the Wasm binary
+# Apply with: kubectl patch deployment <gateway-deployment> -n <namespace> --patch-file config/wasm/gateway-patch.yaml
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: wasm-init
+          image: ghcr.io/kuadrant/mcp-gateway/mcp-routing-wasm:latest
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c', 'cp /plugin.wasm /wasm/mcp-routing.wasm']
+          volumeMounts:
+            - name: wasm-plugins
+              mountPath: /wasm
+      containers:
+        - name: istio-proxy
+          volumeMounts:
+            - name: wasm-plugins
+              mountPath: /etc/envoy
+              readOnly: true
+      volumes:
+        - name: wasm-plugins
+          emptyDir: {}

@@ -244,6 +244,7 @@ func (m mcpRecordHeaders) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// Save the headers in the request context
 	newReq := req.WithContext(context.WithValue(req.Context(),
 		HeadersKey, req.Header))
+	fmt.Println("MCP REQUEST ", req.Method)
 	m.Handler.ServeHTTP(rw, newReq)
 }
 

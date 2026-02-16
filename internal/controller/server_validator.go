@@ -44,8 +44,9 @@ func (v *ServerValidator) ValidateServers(ctx context.Context, namespace string)
 
 	// get endpoint slices for the broker service
 	endpointSliceList := &discoveryv1.EndpointSliceList{}
+	// TODO remove hard coded label here
 	err := v.k8sClient.List(ctx, endpointSliceList, client.InNamespace(namespace), client.MatchingLabels{
-		"app.kubernetes.io/component": "mcp-broker",
+		"app.kubernetes.io/name": "mcp-gateway",
 	})
 	if err != nil {
 		logger.Error(err, "Failed to get endpoint slices for mcp-broker service")
