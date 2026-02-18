@@ -330,3 +330,88 @@ func VerifyMCPGatewayExtensionNotReadyWithReason(ctx context.Context, k8sClient 
 func GetMCPGatewayExtensionStatusMessage(ctx context.Context, k8sClient client.Client, name, namespace string) (string, error) {
 	return NewVerifier(ctx, k8sClient).MCPGatewayExtensionStatusMessage(name, namespace)
 }
+
+// getGateway fetches a Gateway by name and namespace
+func (v *Verifier) getGateway(name, namespace string) (*gatewayapiv1.Gateway, error) {
+	gateway := &gatewayapiv1.Gateway{}
+	err := v.k8sClient.Get(v.ctx, types.NamespacedName{Name: name, Namespace: namespace}, gateway)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Gateway %s/%s: %w", namespace, name, err)
+	}
+	return gateway, nil
+}
+
+// GatewayListenerHasMCPCondition checks if the Gateway listener has MCPGatewayExtension condition with status True
+func (v *Verifier) GatewayListenerHasMCPCondition(gatewayName, gatewayNamespace, listenerName string) error {
+	gateway, err := v.getGateway(gatewayName, gatewayNamespace)
+	if err != nil {
+		return err
+	}
+
+	for _, listener := range gateway.Status.Listeners {
+		if string(listener.Name) == listenerName {
+			for _, condition := range listener.Conditions {
+				if condition.Type == "MCPGatewayExtension" && condition.Status == metav1.ConditionTrue {
+					return nil
+				}
+			}
+			return fmt.Errorf("listener %s does not have MCPGatewayExtension condition with status True", listenerName)
+		}
+	}
+	return fmt.Errorf("listener %s not found in Gateway status", listenerName)
+}
+
+// GatewayListenerNoMCPCondition checks that the Gateway listener does NOT have MCPGatewayExtension condition
+func (v *Verifier) GatewayListenerNoMCPCondition(gatewayName, gatewayNamespace, listenerName string) error {
+	gateway, err := v.getGateway(gatewayName, gatewayNamespace)
+	if err != nil {
+		return err
+	}
+
+	for _, listener := range gateway.Status.Listeners {
+		if string(listener.Name) == listenerName {
+			for _, condition := range listener.Conditions {
+				if condition.Type == "MCPGatewayExtension" && condition.Status == metav1.ConditionTrue {
+					return fmt.Errorf("listener %s still has MCPGatewayExtension condition", listenerName)
+				}
+			}
+			return nil
+		}
+	}
+	// listener not found in status, which means no condition - that's ok
+	return nil
+}
+
+// GatewayListenerMCPConditionMessage returns the MCPGatewayExtension condition message for a listener
+func (v *Verifier) GatewayListenerMCPConditionMessage(gatewayName, gatewayNamespace, listenerName string) (string, error) {
+	gateway, err := v.getGateway(gatewayName, gatewayNamespace)
+	if err != nil {
+		return "", err
+	}
+
+	for _, listener := range gateway.Status.Listeners {
+		if string(listener.Name) == listenerName {
+			for _, condition := range listener.Conditions {
+				if condition.Type == "MCPGatewayExtension" {
+					return condition.Message, nil
+				}
+			}
+			return "", fmt.Errorf("listener %s does not have MCPGatewayExtension condition", listenerName)
+		}
+	}
+	return "", fmt.Errorf("listener %s not found in Gateway status", listenerName)
+}
+
+// Legacy function wrappers for Gateway listener status
+
+func VerifyGatewayListenerHasMCPCondition(ctx context.Context, k8sClient client.Client, gatewayName, gatewayNamespace, listenerName string) error {
+	return NewVerifier(ctx, k8sClient).GatewayListenerHasMCPCondition(gatewayName, gatewayNamespace, listenerName)
+}
+
+func VerifyGatewayListenerNoMCPCondition(ctx context.Context, k8sClient client.Client, gatewayName, gatewayNamespace, listenerName string) error {
+	return NewVerifier(ctx, k8sClient).GatewayListenerNoMCPCondition(gatewayName, gatewayNamespace, listenerName)
+}
+
+func GetGatewayListenerMCPConditionMessage(ctx context.Context, k8sClient client.Client, gatewayName, gatewayNamespace, listenerName string) (string, error) {
+	return NewVerifier(ctx, k8sClient).GatewayListenerMCPConditionMessage(gatewayName, gatewayNamespace, listenerName)
+}

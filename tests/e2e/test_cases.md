@@ -75,3 +75,35 @@
 
 ### [multi-gateway] Multiple Isolated MCP Gateways deployed to the same cluster client
 - As a client, when multiple isolated gateways are ready and available at different hostnames, I should be able to see a unique list of tools for each gateway based on the MCPServerRegistrations created by each team using the MCPGatewayExtension. Example I should see tools prefixed with team_a on one gateway and team_b on the second gateway
+
+### [Happy] MCPGatewayExtension with sectionName targets specific listener
+
+- When an MCPGatewayExtension is created with a valid `targetRef.sectionName` that matches a listener name on the Gateway, the extension should become Ready. The controller should read the listener port and hostname from the Gateway configuration. The EnvoyFilter should be created targeting the correct listener port, and the broker-router deployment should have the `--mcp-gateway-public-host` flag set based on the listener hostname.
+
+### [Error] MCPGatewayExtension with invalid sectionName is rejected
+
+- When an MCPGatewayExtension is created with a `targetRef.sectionName` that does not match any listener on the Gateway, the extension should be marked as Invalid with a status message containing "listener not found". No EnvoyFilter or broker-router deployment should be created.
+
+### [Happy] Gateway listener status updated when MCPGatewayExtension becomes Ready
+
+- When an MCPGatewayExtension becomes Ready, the Gateway's listener status should be updated with an MCPGatewayExtension condition. The condition should have type "MCPGatewayExtension", status "True", reason "Programmed", and a message indicating which extension and EnvoyFilter are using the listener.
+
+### [Happy] Gateway listener status condition removed on MCPGatewayExtension deletion
+
+- When an MCPGatewayExtension is deleted, the MCPGatewayExtension condition should be removed from the Gateway's listener status. The Gateway should no longer show the MCPGatewayExtension condition for that listener.
+
+### [Happy] Wildcard listener hostname converted to mcp subdomain
+
+- When a Gateway listener has a wildcard hostname like `*.example.com`, and an MCPGatewayExtension targets that listener without a public host annotation override, the broker-router deployment should have `--mcp-gateway-public-host=mcp.example.com`. The wildcard prefix should be replaced with "mcp".
+
+### [Error] MCPGatewayExtension rejected when listener allowedRoutes does not permit namespace
+
+- When an MCPGatewayExtension targets a listener that has `allowedRoutes.namespaces.from: Same` and the MCPGatewayExtension is in a different namespace than the Gateway, the extension should be marked as Invalid with a status message indicating the namespace is not allowed.
+
+### [Error] Second MCPGatewayExtension in same namespace is rejected
+
+- When a namespace already has one MCPGatewayExtension that is Ready, and a second MCPGatewayExtension is created in the same namespace, the second extension should be marked as Invalid with a status message indicating a conflict. Only one MCPGatewayExtension is allowed per namespace, and the oldest by creation timestamp wins.
+
+### [multi-gateway] Multiple MCPGatewayExtensions on different listener ports
+
+- When a Gateway has multiple listeners on different ports (e.g., 8080 and 8081), MCPGatewayExtensions in different namespaces can each target a different listener using `targetRef.sectionName`. Both extensions should become Ready, each with their own EnvoyFilter targeting their respective port. The Gateway should have MCPGatewayExtension conditions on both listeners.

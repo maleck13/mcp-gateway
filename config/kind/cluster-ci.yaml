@@ -1,0 +1,26 @@
+# Kind cluster configuration for CI environments
+# This is a minimal config without Keycloak/OIDC for faster CI setup
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "ingress-ready=true"
+  - |
+    apiVersion: kubelet.config.k8s.io/v1beta1
+    kind: KubeletConfiguration
+    syncFrequency: "10s"
+  extraPortMappings:
+  - containerPort: 30080 # mcp-gateway (standard)
+    hostPort: 8001
+    protocol: TCP
+  - containerPort: 30471 # e2e-2 gateway
+    hostPort: 8003
+    protocol: TCP
+  - containerPort: 30472 # e2e-1 gateway
+    hostPort: 8004
+    protocol: TCP

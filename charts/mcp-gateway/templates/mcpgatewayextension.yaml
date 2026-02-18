@@ -19,4 +19,5 @@ spec:
     {{- if .Values.mcpGatewayExtension.gatewayRef.namespace }}
     namespace: {{ .Values.mcpGatewayExtension.gatewayRef.namespace }}
     {{- end }}
+    sectionName: {{ .Values.mcpGatewayExtension.gatewayRef.sectionName }}
 {{- end }}

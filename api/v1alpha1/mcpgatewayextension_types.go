@@ -88,7 +88,7 @@ type MCPGatewayExtensionList struct {
 	Items           []MCPGatewayExtension `json:"items"`
 }
 
-// MCPGatewayExtensionTargetReference identifies an HTTPRoute that points to MCP servers.
+// MCPGatewayExtensionTargetReference identifies a Gateway listener to extend with MCP protocol support.
 // It follows Gateway API patterns for cross-resource references.
 type MCPGatewayExtensionTargetReference struct {
 	// Group is the group of the target resource.
@@ -107,6 +107,14 @@ type MCPGatewayExtensionTargetReference struct {
 	// Namespace of the target resource (optional, defaults to same namespace)
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+
+	// SectionName is the name of a listener on the target Gateway. The controller will
+	// read the listener's port and hostname to configure the MCP Gateway instance.
+	// This allows multiple MCPGatewayExtensions to target different listeners on the
+	// same Gateway, each with their own MCP Gateway instance.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	SectionName string `json:"sectionName"`
 }
 
 func init() {
@@ -150,6 +158,7 @@ func (m *MCPGatewayExtension) PollInterval() string {
 }
 
 // ListenerPort returns the Gateway listener port from annotations, or DefaultListenerPort if not set or invalid
+// Deprecated: Use ListenerConfig from the Gateway instead
 func (m *MCPGatewayExtension) ListenerPort() uint32 {
 	if m.Annotations == nil {
 		return DefaultListenerPort
@@ -163,4 +172,14 @@ func (m *MCPGatewayExtension) ListenerPort() uint32 {
 		return DefaultListenerPort
 	}
 	return uint32(port)
+}
+
+// ListenerConfig holds configuration extracted from a Gateway listener
+type ListenerConfig struct {
+	// Port is the port number from the Gateway listener
+	Port uint32
+	// Hostname is the hostname from the Gateway listener (may be empty or a wildcard)
+	Hostname string
+	// Name is the listener name (sectionName)
+	Name string
 }

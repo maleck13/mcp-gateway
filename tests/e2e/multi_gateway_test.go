@@ -37,6 +37,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		By("Creating an MCPGatewayExtension targeting a non-existent Gateway")
 		mcpExt := NewMCPGatewayExtensionBuilder("test-invalid-gateway", SystemNamespace).
 			WithTarget("non-existent-gateway", GatewayNamespace).
+			WithSectionName(GatewayListenerName).
 			Build()
 		testResources = append(testResources, mcpExt)
 		Expect(k8sClient.Create(ctx, mcpExt)).To(Succeed())
@@ -61,6 +62,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		By("Creating an MCPGatewayExtension in mcp-test namespace targeting Gateway in gateway-system without ReferenceGrant")
 		mcpExt := NewMCPGatewayExtensionBuilder("test-cross-ns", TestServerNameSpace).
 			WithTarget(GatewayName, GatewayNamespace).
+			WithSectionName(GatewayListenerName).
 			Build()
 		testResources = append(testResources, mcpExt)
 		Expect(k8sClient.Create(ctx, mcpExt)).To(Succeed())
@@ -115,6 +117,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 			WithName(e2e1ExtName).
 			InNamespace(e2e1ExtNamespace).
 			TargetingGateway(E2E1GatewayName, GatewayNamespace).
+			WithSectionName(E2E1ListenerName).
 			WithPublicHost(E2E1PublicHost).
 			WithHTTPRoute().
 			Build()
@@ -164,6 +167,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 			WithName(e2e1ExtName).
 			InNamespace(e2e1ExtNamespace).
 			TargetingGateway(E2E1GatewayName, GatewayNamespace).
+			WithSectionName(E2E1ListenerName).
 			WithPublicHost(E2E1PublicHost).
 			Build()
 		newSetup.Register(ctx)
@@ -213,6 +217,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 			WithName(e2e1ExtName).
 			InNamespace(e2e1ExtNamespace).
 			TargetingGateway(E2E1GatewayName, GatewayNamespace).
+			WithSectionName(E2E1ListenerName).
 			WithPublicHost(E2E1PublicHost).
 			WithHTTPRoute().
 			Build()

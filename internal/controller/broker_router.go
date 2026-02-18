@@ -47,7 +47,7 @@ func brokerRouterLabels() map[string]string {
 	}
 }
 
-func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv1alpha1.MCPGatewayExtension) *appsv1.Deployment {
+func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv1alpha1.MCPGatewayExtension, listenerConfig *mcpv1alpha1.ListenerConfig) *appsv1.Deployment {
 	labels := brokerRouterLabels()
 	replicas := int32(1)
 
@@ -62,7 +62,9 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 	if pollInterval != "" {
 		command = append(command, "--mcp-check-interval="+pollInterval)
 	}
-	command = append(command, "--mcp-gateway-public-host="+mcpExt.PublicHost())
+	// derive public host from listener hostname, with annotation override for backwards compatibility
+	publicHost := derivePublicHost(listenerConfig, mcpExt.PublicHost())
+	command = append(command, "--mcp-gateway-public-host="+publicHost)
 	command = append(command, "--mcp-router-key="+routerKey(mcpExt))
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -180,7 +182,26 @@ func routerKey(mcpExt *mcpv1alpha1.MCPGatewayExtension) string {
 	return hex.EncodeToString(hash[:16])
 }
 
-func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (bool, error) {
+// derivePublicHost determines the public host for the MCP Gateway.
+// Priority: annotation override > listener hostname > empty string
+// For wildcard hostnames (*.example.com), we use mcp.example.com as the default subdomain.
+func derivePublicHost(listenerConfig *mcpv1alpha1.ListenerConfig, annotationOverride string) string {
+	// annotation takes precedence for backwards compatibility
+	if annotationOverride != "" {
+		return annotationOverride
+	}
+	if listenerConfig == nil || listenerConfig.Hostname == "" {
+		return ""
+	}
+	hostname := listenerConfig.Hostname
+	// handle wildcard hostnames: *.example.com -> mcp.example.com
+	if strings.HasPrefix(hostname, "*.") {
+		return "mcp" + hostname[1:]
+	}
+	return hostname
+}
+
+func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, listenerConfig *mcpv1alpha1.ListenerConfig) (bool, error) {
 	// reconcile service account (must exist before deployment)
 	serviceAccount := r.buildBrokerRouterServiceAccount(mcpExt)
 	if err := controllerutil.SetControllerReference(mcpExt, serviceAccount, r.Scheme); err != nil {
@@ -207,7 +228,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	}
 
 	// reconcile deployment
-	deployment := r.buildBrokerRouterDeployment(mcpExt)
+	deployment := r.buildBrokerRouterDeployment(mcpExt, listenerConfig)
 	if err := controllerutil.SetControllerReference(mcpExt, deployment, r.Scheme); err != nil {
 		return false, fmt.Errorf("failed to set controller reference on deployment: %w", err)
 	}

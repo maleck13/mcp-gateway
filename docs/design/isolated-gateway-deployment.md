@@ -38,20 +38,23 @@ The MCPGatewayExtension can target Gateway API `Gateway` resources in any namesp
 **Example Resources:**
 
 ```yaml
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kagenti.com/v1alpha1
 kind: MCPGatewayExtension
 metadata:
   name: team1
   namespace: team1
 spec:
-  targetRefs:
-    - name: gateway
-      namespace: gateway-system
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: gateway
+    namespace: gateway-system
+    sectionName: mcp  # Name of the listener on the Gateway to target
 status:
   conditions:
     - type: Ready
       status: "True"
-      reason: ReferenceGrantExists
+      reason: ValidMCPGatewayExtension
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: ReferenceGrant
@@ -60,7 +63,7 @@ metadata:
   namespace: gateway-system
 spec:
   from:
-    - group: mcp.kuadrant.io
+    - group: mcp.kagenti.com
       kind: MCPGatewayExtension
       namespace: team1
   to:

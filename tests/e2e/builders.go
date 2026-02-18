@@ -479,6 +479,7 @@ type MCPGatewayExtensionSetup struct {
 	namespace        string
 	gatewayName      string
 	gatewayNamespace string
+	sectionName      string
 	publicHost       string
 	pollInterval     string
 	extension        *mcpv1alpha1.MCPGatewayExtension
@@ -531,6 +532,12 @@ func (s *MCPGatewayExtensionSetup) WithPollInterval(interval string) *MCPGateway
 	return s
 }
 
+// WithSectionName sets the sectionName (listener name) to target on the Gateway
+func (s *MCPGatewayExtensionSetup) WithSectionName(sectionName string) *MCPGatewayExtensionSetup {
+	s.sectionName = sectionName
+	return s
+}
+
 // WithHTTPRoute creates an HTTPRoute with the public host and /mcp path
 // pointing to the mcp-gateway service in the same namespace as the MCPGatewayExtension
 func (s *MCPGatewayExtensionSetup) WithHTTPRoute() *MCPGatewayExtensionSetup {
@@ -558,10 +565,11 @@ func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 		},
 		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
 			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
-				Group:     "gateway.networking.k8s.io",
-				Kind:      "Gateway",
-				Name:      s.gatewayName,
-				Namespace: s.gatewayNamespace,
+				Group:       "gateway.networking.k8s.io",
+				Kind:        "Gateway",
+				Name:        s.gatewayName,
+				Namespace:   s.gatewayNamespace,
+				SectionName: s.sectionName,
 			},
 		},
 	}
@@ -794,6 +802,7 @@ type MCPGatewayExtensionBuilder struct {
 	namespace       string
 	targetGateway   string
 	targetNamespace string
+	sectionName     string
 }
 
 // NewMCPGatewayExtensionBuilder creates a new MCPGatewayExtensionBuilder
@@ -811,6 +820,12 @@ func (b *MCPGatewayExtensionBuilder) WithTarget(gatewayName, gatewayNamespace st
 	return b
 }
 
+// WithSectionName sets the sectionName (listener name) to target on the Gateway
+func (b *MCPGatewayExtensionBuilder) WithSectionName(sectionName string) *MCPGatewayExtensionBuilder {
+	b.sectionName = sectionName
+	return b
+}
+
 // Build creates the MCPGatewayExtension resource
 func (b *MCPGatewayExtensionBuilder) Build() *mcpv1alpha1.MCPGatewayExtension {
 	return &mcpv1alpha1.MCPGatewayExtension{
@@ -821,10 +836,11 @@ func (b *MCPGatewayExtensionBuilder) Build() *mcpv1alpha1.MCPGatewayExtension {
 		},
 		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
 			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
-				Group:     "gateway.networking.k8s.io",
-				Kind:      "Gateway",
-				Name:      b.targetGateway,
-				Namespace: b.targetNamespace,
+				Group:       "gateway.networking.k8s.io",
+				Kind:        "Gateway",
+				Name:        b.targetGateway,
+				Namespace:   b.targetNamespace,
+				SectionName: b.sectionName,
 			},
 		},
 	}

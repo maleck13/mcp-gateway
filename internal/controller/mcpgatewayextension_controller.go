@@ -115,6 +115,7 @@ type MCPGatewayExtensionReconciler struct {
 // +kubebuilder:rbac:groups=mcp.kagenti.com,resources=mcpgatewayextensions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mcp.kagenti.com,resources=mcpgatewayextensions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
@@ -147,6 +148,12 @@ func (r *MCPGatewayExtensionReconciler) handleDeletion(ctx context.Context, mcpE
 
 	r.log.Info("deleting mcpgatewayextension", "name", mcpExt.Name, "namespace", mcpExt.Namespace)
 
+	// clean up gateway listener status
+	if err := r.removeGatewayListenerStatus(ctx, mcpExt); err != nil {
+		r.log.Error("failed to remove gateway listener status", "error", err)
+		// don't fail deletion for status cleanup errors
+	}
+
 	if err := r.deleteEnvoyFilter(ctx, mcpExt); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -169,7 +176,16 @@ func (r *MCPGatewayExtensionReconciler) ensureFinalizer(ctx context.Context, mcp
 }
 
 func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (ctrl.Result, error) {
-	targetGateway, err := r.validateGatewayTarget(ctx, mcpExt)
+	// check for namespace conflict first - only one MCPGatewayExtension per namespace
+	if err := r.checkNamespaceConflict(ctx, mcpExt); err != nil {
+		var valErr *validationError
+		if errors.As(err, &valErr) {
+			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
+		}
+		return ctrl.Result{}, err
+	}
+
+	targetGateway, listenerConfig, err := r.validateGatewayTarget(ctx, mcpExt)
 	if err != nil {
 		var valErr *validationError
 		if errors.As(err, &valErr) {
@@ -177,8 +193,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		}
 		return ctrl.Result{}, err
 	}
-	//this must always be done after the validation
-	if err := r.checkGatewayConflict(ctx, mcpExt, targetGateway); err != nil {
+	// listener port conflict check must always be done after the validation
+	if err := r.checkListenerConflict(ctx, mcpExt, targetGateway, listenerConfig); err != nil {
 		var valErr *validationError
 		if errors.As(err, &valErr) {
 			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
@@ -190,7 +206,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		return ctrl.Result{}, err
 	}
 
-	deploymentReady, err := r.reconcileBrokerRouter(ctx, mcpExt)
+	deploymentReady, err := r.reconcileBrokerRouter(ctx, mcpExt, listenerConfig)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -203,28 +219,40 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	if err := r.reconcileEnvoyFilter(ctx, mcpExt, targetGateway); err != nil {
+	if err := r.reconcileEnvoyFilter(ctx, mcpExt, targetGateway, listenerConfig); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// update Gateway listener status to indicate MCP Gateway is configured
+	if err := r.updateGatewayListenerStatus(ctx, mcpExt, targetGateway, listenerConfig); err != nil {
+		r.log.Error("failed to update gateway listener status", "error", err)
+		// don't fail reconciliation for status update errors
 	}
 
 	return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionTrue, mcpv1alpha1.ConditionReasonSuccess, "successfully verified and configured")
 }
 
-func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (*gatewayv1.Gateway, error) {
+func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (*gatewayv1.Gateway, *mcpv1alpha1.ListenerConfig, error) {
 	targetGateway, err := r.gatewayTarget(ctx, mcpExt.Spec.TargetRef)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, newValidationError(mcpv1alpha1.ConditionReasonInvalid,
-				fmt.Sprintf("invalid: gateway target %s/%s", mcpExt.Spec.TargetRef.Namespace, mcpExt.Spec.TargetRef.Name))
+			return nil, nil, newValidationError(mcpv1alpha1.ConditionReasonInvalid,
+				fmt.Sprintf("invalid: gateway target %s/%s not found", mcpExt.Spec.TargetRef.Namespace, mcpExt.Spec.TargetRef.Name))
 		}
-		return nil, err
+		return nil, nil, err
+	}
+
+	// validate sectionName references an existing listener and namespace is allowed
+	listenerConfig, err := findListenerConfig(targetGateway, mcpExt.Spec.TargetRef.SectionName, mcpExt.Namespace)
+	if err != nil {
+		return nil, nil, newValidationError(mcpv1alpha1.ConditionReasonInvalid, err.Error())
 	}
 
 	// cross-namespace reference requires ReferenceGrant
 	if mcpExt.Spec.TargetRef.Namespace != mcpExt.Namespace {
 		hasGrant, err := r.MCPExtFinderValidator.HasValidReferenceGrant(ctx, mcpExt)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		if !hasGrant {
@@ -232,17 +260,136 @@ func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Contex
 				"extension", mcpExt.Name, "extension-namespace", mcpExt.Namespace,
 				"gateway-namespace", mcpExt.Spec.TargetRef.Namespace)
 			if err := r.ConfigWriterDeleter.WriteEmptyConfig(ctx, config.NamespaceName(mcpExt.Namespace)); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
-			return nil, newValidationError(mcpv1alpha1.ConditionReasonRefGrantRequired,
+			return nil, nil, newValidationError(mcpv1alpha1.ConditionReasonRefGrantRequired,
 				fmt.Sprintf("invalid: ReferenceGrant required in %s to allow cross-namespace reference from %s", mcpExt.Spec.TargetRef.Namespace, mcpExt.Namespace))
 		}
 	}
 
-	return targetGateway, nil
+	return targetGateway, listenerConfig, nil
 }
 
-func (r *MCPGatewayExtensionReconciler) checkGatewayConflict(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway) error {
+// findListenerConfig finds the listener configuration for a given sectionName on the Gateway
+// and validates that the MCPGatewayExtension's namespace is allowed by the listener's allowedRoutes
+func findListenerConfig(gateway *gatewayv1.Gateway, sectionName string, mcpExtNamespace string) (*mcpv1alpha1.ListenerConfig, error) {
+	for _, listener := range gateway.Spec.Listeners {
+		if string(listener.Name) == sectionName {
+			// validate that the MCPGatewayExtension namespace is allowed by the listener
+			if !listenerAllowsNamespace(&listener, mcpExtNamespace, gateway.Namespace) {
+				return nil, fmt.Errorf("invalid: listener %q on gateway %s/%s does not allow routes from namespace %q",
+					sectionName, gateway.Namespace, gateway.Name, mcpExtNamespace)
+			}
+
+			hostname := ""
+			if listener.Hostname != nil {
+				hostname = string(*listener.Hostname)
+			}
+			// Gateway API uses int32 for port, but port numbers are always positive (1-65535)
+			// so this conversion is safe. The #nosec directive suppresses the gosec G115 warning.
+			port := uint32(listener.Port) // #nosec G115
+			return &mcpv1alpha1.ListenerConfig{
+				Port:     port,
+				Hostname: hostname,
+				Name:     sectionName,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("invalid: listener %q not found on gateway %s/%s", sectionName, gateway.Namespace, gateway.Name)
+}
+
+// findListenerConfigByName finds listener configuration by name without namespace validation.
+// Used for conflict detection where we only need the port number.
+func findListenerConfigByName(gateway *gatewayv1.Gateway, sectionName string) (*mcpv1alpha1.ListenerConfig, error) {
+	for _, listener := range gateway.Spec.Listeners {
+		if string(listener.Name) == sectionName {
+			hostname := ""
+			if listener.Hostname != nil {
+				hostname = string(*listener.Hostname)
+			}
+			port := uint32(listener.Port) // #nosec G115
+			return &mcpv1alpha1.ListenerConfig{
+				Port:     port,
+				Hostname: hostname,
+				Name:     sectionName,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("listener %q not found on gateway %s/%s", sectionName, gateway.Namespace, gateway.Name)
+}
+
+// listenerAllowsNamespace checks if the listener's allowedRoutes configuration permits
+// routes from the given namespace. This follows Gateway API semantics:
+// - "All": allows routes from all namespaces
+// - "Same": allows routes only from the Gateway's namespace (default if not specified)
+// - "Selector": allows routes from namespaces matching the label selector
+func listenerAllowsNamespace(listener *gatewayv1.Listener, namespace, gatewayNamespace string) bool {
+	// if allowedRoutes is not specified, default behavior is "Same" namespace
+	if listener.AllowedRoutes == nil || listener.AllowedRoutes.Namespaces == nil {
+		return namespace == gatewayNamespace
+	}
+
+	namespaces := listener.AllowedRoutes.Namespaces
+
+	// if From is not specified, default is "Same"
+	if namespaces.From == nil {
+		return namespace == gatewayNamespace
+	}
+
+	switch *namespaces.From {
+	case gatewayv1.NamespacesFromAll:
+		return true
+	case gatewayv1.NamespacesFromSame:
+		return namespace == gatewayNamespace
+	case gatewayv1.NamespacesFromSelector:
+		// for selector-based matching, we would need to fetch the namespace
+		// and check labels. For now, we'll accept it as we can't easily
+		// validate without additional API calls. The Gateway controller
+		// will ultimately enforce this anyway.
+		// TODO: implement proper selector-based validation
+		return true
+	case gatewayv1.NamespacesFromNone:
+		// no routes allowed from any namespace
+		return false
+	}
+	// unreachable for known values, but be conservative for future values
+	return false
+}
+
+// checkNamespaceConflict checks if there are multiple MCPGatewayExtensions in the same namespace.
+// Only one MCPGatewayExtension is allowed per namespace. The oldest (by creation timestamp) wins.
+func (r *MCPGatewayExtensionReconciler) checkNamespaceConflict(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
+	extList := &mcpv1alpha1.MCPGatewayExtensionList{}
+	if err := r.List(ctx, extList, client.InNamespace(mcpExt.Namespace)); err != nil {
+		return fmt.Errorf("failed to list extensions in namespace: %w", err)
+	}
+
+	// filter out extensions being deleted
+	var activeExts []mcpv1alpha1.MCPGatewayExtension
+	for _, ext := range extList.Items {
+		if ext.DeletionTimestamp == nil {
+			activeExts = append(activeExts, ext)
+		}
+	}
+
+	if len(activeExts) <= 1 {
+		return nil
+	}
+
+	oldest := findOldestExtension(activeExts)
+	if oldest.GetUID() == mcpExt.GetUID() {
+		return nil // this is the oldest one, it's valid
+	}
+
+	return newValidationError(mcpv1alpha1.ConditionReasonInvalid,
+		fmt.Sprintf("conflict: namespace %s already has MCPGatewayExtension %s (only one per namespace allowed)",
+			mcpExt.Namespace, oldest.Name))
+}
+
+// checkListenerConflict checks if there are multiple MCPGatewayExtensions targeting listeners
+// that share the same port on the same Gateway. This is invalid because only one ext_proc
+// can handle a given port.
+func (r *MCPGatewayExtensionReconciler) checkListenerConflict(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *mcpv1alpha1.ListenerConfig) error {
 	existingExts, err := r.listMCPGatewayExtsForGateway(ctx, targetGateway)
 	if err != nil {
 		return fmt.Errorf("failed to list extensions for gateway: %w", err)
@@ -252,14 +399,30 @@ func (r *MCPGatewayExtensionReconciler) checkGatewayConflict(ctx context.Context
 		return nil
 	}
 
-	oldest := findOldestExtension(existingExts.Items)
-	if oldest.GetUID() == mcpExt.GetUID() {
-		return nil
+	// check for conflicting extensions targeting the same port
+	for _, ext := range existingExts.Items {
+		if ext.GetUID() == mcpExt.GetUID() {
+			continue
+		}
+		// find the listener config for this extension (skip namespace validation here,
+		// as we only need the port for conflict detection)
+		extListenerConfig, err := findListenerConfigByName(targetGateway, ext.Spec.TargetRef.SectionName)
+		if err != nil {
+			// if we can't find the listener, skip this extension (it will fail its own validation)
+			continue
+		}
+		if extListenerConfig.Port == listenerConfig.Port {
+			// conflict: same port on same gateway
+			oldest := findOldestExtension([]mcpv1alpha1.MCPGatewayExtension{*mcpExt, ext})
+			if oldest.GetUID() != mcpExt.GetUID() {
+				return newValidationError(mcpv1alpha1.ConditionReasonInvalid,
+					fmt.Sprintf("conflict: listener port %d on gateway %s/%s is already configured by MCPGatewayExtension %s/%s (listener %s)",
+						listenerConfig.Port, targetGateway.Namespace, targetGateway.Name, ext.Namespace, ext.Name, ext.Spec.TargetRef.SectionName))
+			}
+		}
 	}
 
-	return newValidationError(mcpv1alpha1.ConditionReasonInvalid,
-		fmt.Sprintf("conflict: gateway %s/%s is already configured by MCPGatewayExtension %s/%s",
-			targetGateway.Namespace, targetGateway.Name, oldest.Namespace, oldest.Name))
+	return nil
 }
 
 func findOldestExtension(exts []mcpv1alpha1.MCPGatewayExtension) *mcpv1alpha1.MCPGatewayExtension {
@@ -286,6 +449,121 @@ func (r *MCPGatewayExtensionReconciler) updateStatus(ctx context.Context, mcpExt
 		return nil
 	}
 	return r.Status().Update(ctx, mcpExt)
+}
+
+// GatewayListenerConditionType is the condition type for MCP Gateway Extension
+const GatewayListenerConditionType gatewayv1.ListenerConditionType = "MCPGatewayExtension"
+
+// updateGatewayListenerStatus updates the Gateway listener status with a condition
+// indicating that an MCP Gateway Extension is configured for this listener
+func (r *MCPGatewayExtensionReconciler) updateGatewayListenerStatus(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, gateway *gatewayv1.Gateway, listenerConfig *mcpv1alpha1.ListenerConfig) error {
+	// get fresh copy of gateway to avoid conflicts
+	freshGateway := &gatewayv1.Gateway{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(gateway), freshGateway); err != nil {
+		return fmt.Errorf("failed to get gateway for status update: %w", err)
+	}
+
+	// find or create status for the listener
+	listenerName := gatewayv1.SectionName(listenerConfig.Name)
+	var listenerStatus *gatewayv1.ListenerStatus
+	for i := range freshGateway.Status.Listeners {
+		if freshGateway.Status.Listeners[i].Name == listenerName {
+			listenerStatus = &freshGateway.Status.Listeners[i]
+			break
+		}
+	}
+
+	// if listener status doesn't exist, create it
+	if listenerStatus == nil {
+		freshGateway.Status.Listeners = append(freshGateway.Status.Listeners, gatewayv1.ListenerStatus{
+			Name: listenerName,
+		})
+		listenerStatus = &freshGateway.Status.Listeners[len(freshGateway.Status.Listeners)-1]
+	}
+
+	envoyFilterName, envoyFilterNamespace := envoyFilterNameAndNamespace(mcpExt)
+	conditionMessage := fmt.Sprintf("listener in use by MCP Gateway: %s/%s EnvoyFilter: %s/%s",
+		mcpExt.Namespace, mcpExt.Name, envoyFilterNamespace, envoyFilterName)
+
+	newCondition := metav1.Condition{
+		Type:               string(GatewayListenerConditionType),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: freshGateway.Generation,
+		Reason:             "Programmed",
+		Message:            conditionMessage,
+		LastTransitionTime: metav1.Now(),
+	}
+
+	// check if condition already exists and is unchanged
+	existingCondition := meta.FindStatusCondition(listenerStatus.Conditions, string(GatewayListenerConditionType))
+	if existingCondition != nil {
+		if existingCondition.Status == newCondition.Status &&
+			existingCondition.Reason == newCondition.Reason &&
+			existingCondition.Message == newCondition.Message {
+			return nil // no update needed
+		}
+		// preserve LastTransitionTime if status didn't change
+		if existingCondition.Status == newCondition.Status {
+			newCondition.LastTransitionTime = existingCondition.LastTransitionTime
+		}
+	}
+
+	meta.SetStatusCondition(&listenerStatus.Conditions, newCondition)
+	r.log.Info("updating gateway listener status",
+		"gateway", fmt.Sprintf("%s/%s", freshGateway.Namespace, freshGateway.Name),
+		"listener", listenerConfig.Name,
+		"extension", fmt.Sprintf("%s/%s", mcpExt.Namespace, mcpExt.Name))
+
+	return r.Status().Update(ctx, freshGateway)
+}
+
+// removeGatewayListenerStatus removes the MCP Gateway Extension condition from
+// the Gateway listener status during cleanup
+func (r *MCPGatewayExtensionReconciler) removeGatewayListenerStatus(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
+	gatewayNamespace := mcpExt.Spec.TargetRef.Namespace
+	if gatewayNamespace == "" {
+		gatewayNamespace = mcpExt.Namespace
+	}
+
+	gateway := &gatewayv1.Gateway{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Namespace: gatewayNamespace,
+		Name:      mcpExt.Spec.TargetRef.Name,
+	}, gateway); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // gateway doesn't exist, nothing to clean up
+		}
+		return fmt.Errorf("failed to get gateway for status cleanup: %w", err)
+	}
+
+	// find the listener status
+	listenerName := gatewayv1.SectionName(mcpExt.Spec.TargetRef.SectionName)
+	var listenerStatusIdx = -1
+	for i := range gateway.Status.Listeners {
+		if gateway.Status.Listeners[i].Name == listenerName {
+			listenerStatusIdx = i
+			break
+		}
+	}
+
+	if listenerStatusIdx == -1 {
+		return nil // listener status doesn't exist, nothing to clean up
+	}
+
+	// remove the condition
+	listenerStatus := &gateway.Status.Listeners[listenerStatusIdx]
+	existingCondition := meta.FindStatusCondition(listenerStatus.Conditions, string(GatewayListenerConditionType))
+	if existingCondition == nil {
+		return nil // condition doesn't exist, nothing to clean up
+	}
+
+	meta.RemoveStatusCondition(&listenerStatus.Conditions, string(GatewayListenerConditionType))
+	r.log.Info("removing gateway listener status",
+		"gateway", fmt.Sprintf("%s/%s", gateway.Namespace, gateway.Name),
+		"listener", mcpExt.Spec.TargetRef.SectionName,
+		"extension", fmt.Sprintf("%s/%s", mcpExt.Namespace, mcpExt.Name))
+
+	return r.Status().Update(ctx, gateway)
 }
 
 func (r *MCPGatewayExtensionReconciler) gatewayTarget(ctx context.Context, target mcpv1alpha1.MCPGatewayExtensionTargetReference) (*gatewayv1.Gateway, error) {
@@ -408,7 +686,7 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForReferenceGrant(ct
 	return requests
 }
 
-func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway) (*istionetv1alpha3.EnvoyFilter, error) {
+func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *mcpv1alpha1.ListenerConfig) (*istionetv1alpha3.EnvoyFilter, error) {
 	// build the ext_proc filter config as a structpb.Struct
 	extProcConfig, err := structpb.NewStruct(map[string]any{
 		"name": "envoy.filters.http.ext_proc",
@@ -459,7 +737,7 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 						Context: istiov1alpha3.EnvoyFilter_GATEWAY,
 						ObjectTypes: &istiov1alpha3.EnvoyFilter_EnvoyConfigObjectMatch_Listener{
 							Listener: &istiov1alpha3.EnvoyFilter_ListenerMatch{
-								PortNumber: mcpExt.ListenerPort(),
+								PortNumber: listenerConfig.Port,
 								FilterChain: &istiov1alpha3.EnvoyFilter_ListenerMatch_FilterChainMatch{
 									Filter: &istiov1alpha3.EnvoyFilter_ListenerMatch_FilterMatch{
 										Name: "envoy.filters.network.http_connection_manager",
@@ -481,8 +759,8 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 	}, nil
 }
 
-func (r *MCPGatewayExtensionReconciler) reconcileEnvoyFilter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway) error {
-	envoyFilter, err := r.buildEnvoyFilter(mcpExt, targetGateway)
+func (r *MCPGatewayExtensionReconciler) reconcileEnvoyFilter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *mcpv1alpha1.ListenerConfig) error {
+	envoyFilter, err := r.buildEnvoyFilter(mcpExt, targetGateway, listenerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to build envoy filter: %w", err)
 	}

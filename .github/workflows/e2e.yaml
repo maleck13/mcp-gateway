@@ -26,28 +26,7 @@ jobs:
           go-version: '1.24'
 
       - name: Create Kind cluster
-        run: |
-          kind create cluster --name mcp-gateway --config - <<EOF
-          kind: Cluster
-          apiVersion: kind.x-k8s.io/v1alpha4
-          nodes:
-          - role: control-plane
-            kubeadmConfigPatches:
-              - |
-                apiVersion: kubelet.config.k8s.io/v1beta1
-                kind: KubeletConfiguration
-                syncFrequency: "10s"
-            extraPortMappings:
-            - containerPort: 30080
-              hostPort: 8001
-              protocol: TCP
-            - containerPort: 30471
-              hostPort: 8003
-              protocol: TCP
-            - containerPort: 30472
-              hostPort: 8004
-              protocol: TCP
-          EOF
+        run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
 
       - name: Setup CI environment
         run: make ci-setup

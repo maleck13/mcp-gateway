@@ -36,6 +36,7 @@ spec:
     kind: Gateway
     name: mcp-gateway
     namespace: gateway-system
+    sectionName: mcp  # Name of the listener on the Gateway
 EOF
 ```
 

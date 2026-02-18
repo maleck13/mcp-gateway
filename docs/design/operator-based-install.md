@@ -195,6 +195,16 @@ We currently update the status of the HTTPRoute. We will extend this to update t
         type: MCPGatewayExtension
 ```
 
+So each targeted listener will have a new condition under the gateway `status.listeners` with the above condition added.
+
+>Note: why are we updating the gateway's status?
+
+We are using the conditions to represent the state and communicate to others what is integrating with that gateway. This comes from the [api-conventions](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#spec-and-status)
+
+```
+Objects may report multiple conditions, and new types of conditions may be added in the future or by 3rd party controllers. Therefore, conditions are represented using a list/slice of objects, where each condition has a similar structure. This collection should be treated as a map with a key of type.
+```
+
 ### Security Considerations
 
 #### EnvoyFilter Creation
@@ -229,12 +239,8 @@ As this proposed change will allow teams to share a common ingress gateway, ther
 
 ### Todo
 - [ ] Generate OLM bundle (CatalogSource, Package, Bundle metadata)
-- [ ] Add listener status condition updates
 - [ ] Add trusted-header key pair generation (optional feature)
-- [ ] Update documentation for sectionName requirement
 - [ ] Create migration guide for existing MCPGatewayExtensions
-- [ ] Add sectionName to MCPGatewayExtension targetRef
-- [ ] Update controller to read listener configuration
 - [ ] Implement HTTPRoute creation for gateway access
 
 ### Completed
@@ -244,3 +250,7 @@ As this proposed change will allow teams to share a common ingress gateway, ther
 - [x] Implement EnvoyFilter generation in MCPGatewayExtension reconciler
 - [x] Create e2e tests and infrastructure
 - [x] Update helm templates to reflect the new operator deployment
+- [x] Add sectionName to MCPGatewayExtension targetRef
+- [x] Add listener status condition updates
+- [x] Update controller to read listener configuration to define mcp gateway flags
+- [x] Update documentation for sectionName requirement

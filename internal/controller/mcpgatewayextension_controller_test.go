@@ -97,7 +97,7 @@ func createTestReferenceGrant(name, namespace, fromNamespace string, gatewayName
 	return refGrant
 }
 
-// createTestMCPGatewayExtension creates an MCPGatewayExtension targeting a Gateway
+// createTestMCPGatewayExtension creates an MCPGatewayExtension targeting a Gateway listener
 func createTestMCPGatewayExtension(name, namespace, gatewayName, gatewayNamespace string) *mcpv1alpha1.MCPGatewayExtension {
 	resource := &mcpv1alpha1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
@@ -106,10 +106,11 @@ func createTestMCPGatewayExtension(name, namespace, gatewayName, gatewayNamespac
 		},
 		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
 			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
-				Group:     "gateway.networking.k8s.io",
-				Kind:      "Gateway",
-				Name:      gatewayName,
-				Namespace: gatewayNamespace,
+				Group:       "gateway.networking.k8s.io",
+				Kind:        "Gateway",
+				Name:        gatewayName,
+				Namespace:   gatewayNamespace,
+				SectionName: "http", // matches the listener name in createTestGateway
 			},
 		},
 	}

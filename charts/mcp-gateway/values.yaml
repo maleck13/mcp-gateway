@@ -88,3 +88,5 @@ mcpGatewayExtension:
     name: mcp-gateway
     # Namespace of the Gateway (if different from release namespace, a ReferenceGrant will be created)
     namespace: gateway-system
+    # Name of the listener on the Gateway to target (required)
+    sectionName: mcp

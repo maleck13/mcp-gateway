@@ -104,6 +104,7 @@ var _ = BeforeSuite(func() {
 		WithName(MCPExtensionName).
 		InNamespace(SystemNamespace).
 		TargetingGateway(GatewayName, GatewayNamespace).
+		WithSectionName(GatewayListenerName).
 		WithPublicHost(gatewayPublicHost).
 		WithHTTPRoute().
 		Build()
