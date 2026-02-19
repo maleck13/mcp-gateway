@@ -34,10 +34,11 @@ jobs:
           npm install -g cspell@9.4.0
           make lint
 
-      - name: Check CRD synchronization
+      - name: Check generated resources are synchronized
         run: |
           # Install controller-gen if not available
           go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
-          
-          # Check if CRDs are synchronized
-          make check-crd-sync
+          make yq
+
+          # Check if generated resources are synchronized
+          make check

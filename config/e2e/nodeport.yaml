@@ -46,3 +46,53 @@ spec:
     gateway.networking.k8s.io/gateway-name: e2e-2
   sessionAffinity: None
   type: NodePort
+---
+# NodePort for shared-gateway (team-a)
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    gateway.istio.io/managed: istio.io-gateway-controller
+    gateway.networking.k8s.io/gateway-name: shared-gateway
+    istio.io/dataplane-mode: none
+  name: shared-gateway-team-a-np
+  namespace: gateway-system
+spec:
+  externalTrafficPolicy: Cluster
+  internalTrafficPolicy: Cluster
+  ports:
+    - appProtocol: http
+      name: team-a-mcp
+      nodePort: 30473
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    gateway.networking.k8s.io/gateway-name: shared-gateway
+  sessionAffinity: None
+  type: NodePort
+---
+# NodePort for shared-gateway (team-b)
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    gateway.istio.io/managed: istio.io-gateway-controller
+    gateway.networking.k8s.io/gateway-name: shared-gateway
+    istio.io/dataplane-mode: none
+  name: shared-gateway-team-b-np
+  namespace: gateway-system
+spec:
+  externalTrafficPolicy: Cluster
+  internalTrafficPolicy: Cluster
+  ports:
+    - appProtocol: http
+      name: team-b-mcp
+      nodePort: 30474
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    gateway.networking.k8s.io/gateway-name: shared-gateway
+  sessionAffinity: None
+  type: NodePort

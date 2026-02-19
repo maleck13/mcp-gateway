@@ -8,8 +8,8 @@ Verify and update Helm chart templates to match the source manifests in config/m
 
 Run the existing make targets:
 ```bash
-make update-helm-crds
-make check-crd-sync
+make generate-all
+make check
 ```
 
 ### 2. Compare source manifests to chart templates

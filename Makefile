@@ -86,6 +86,35 @@ generate: controller-gen ## Generate code including deepcopy functions
 	bin/controller-gen object paths="./api/..."
 	bin/controller-gen rbac:roleName=mcp-gateway-role paths="./internal/controller/..." output:dir=config/rbac
 
+# Sync RBAC rules from generated config/rbac/role.yaml to kustomize and helm chart
+sync-rbac: generate yq ## Sync generated RBAC rules to kustomize and helm chart
+	hack/sync-helm-rbac.sh
+
+# Check if RBAC rules are synchronized across all locations
+check-rbac-sync: yq ## Check if kustomize and helm chart RBAC rules match generated RBAC
+	@echo "Checking RBAC synchronization..."
+	@GENERATED_RULES=$$(bin/yq -o=json '.rules' config/rbac/role.yaml | bin/yq -P 'sort_by(.apiGroups[0], .resources[0])'); \
+	HELM_RULES=$$(sed -n '/^rules:/,/^---/p' charts/mcp-gateway/templates/rbac.yaml | sed '1d;$$d' | sed 's/^  //' | bin/yq -o=json '.' | bin/yq -P 'sort_by(.apiGroups[0], .resources[0])'); \
+	KUSTOMIZE_RULES=$$(bin/yq 'select(di == 1).rules' config/mcp-gateway/components/controller/rbac-controller.yaml | bin/yq -o=json '.' | bin/yq -P 'sort_by(.apiGroups[0], .resources[0])'); \
+	SYNC_ERROR=0; \
+	if [ "$$GENERATED_RULES" != "$$HELM_RULES" ]; then \
+		echo "Helm chart RBAC rules are out of sync"; \
+		SYNC_ERROR=1; \
+	fi; \
+	if [ "$$GENERATED_RULES" != "$$KUSTOMIZE_RULES" ]; then \
+		echo "Kustomize RBAC rules are out of sync"; \
+		SYNC_ERROR=1; \
+	fi; \
+	if [ $$SYNC_ERROR -eq 1 ]; then \
+		echo "Run 'make sync-rbac' to update."; \
+		exit 1; \
+	else \
+		echo "RBAC rules are synchronized"; \
+	fi
+
+# Run all sync checks
+check: check-crd-sync check-rbac-sync ## Check all generated resources are synchronized
+
 # Generate CRDs from Go types
 generate-crds: generate ## Generate CRD manifests from Go types
 	bin/controller-gen crd paths="./api/..." output:dir=config/crd
@@ -97,9 +126,9 @@ update-helm-crds: generate-crds ## Update Helm chart CRDs (run after generate-cr
 	cp config/crd/mcp.kagenti.com_*.yaml charts/mcp-gateway/crds/
 	@echo "✅ Helm chart CRDs updated"
 
-# Generate CRDs and update Helm chart in one step
-generate-crds-all: update-helm-crds ## Generate CRDs and update Helm chart
-	@echo "✅ All CRDs generated and synchronized"
+# Generate all code, CRDs, and sync RBAC and CRDs to kustomize and helm chart
+generate-all: update-helm-crds sync-rbac ## Generate code, CRDs, and sync everything
+	@echo "All generated resources synchronized"
 
 # Check if CRDs are synchronized between config/crd and charts/
 check-crd-sync: ## Check if CRDs are synchronized between config/crd and charts/mcp-gateway/crds
@@ -122,7 +151,7 @@ check-crd-sync: ## Check if CRDs are synchronized between config/crd and charts/
 	done; \
 	if [ $$SYNC_ERROR -eq 1 ]; then \
 		echo ""; \
-		echo "Run 'make update-helm-crds' to sync, or 'make generate-crds-all' to regenerate and sync"; \
+		echo "Run 'make update-helm-crds' to sync, or 'make generate-all' to regenerate and sync"; \
 		exit 1; \
 	else \
 		echo "✅ CRDs are synchronized"; \
@@ -477,6 +506,7 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	"$(MAKE)" deploy-gateway
 	# Deploy controller + MCPGatewayExtension
 	"$(MAKE)" deploy
+	"$(MAKE)" add-jwt-key
 	# Deploy and configure test servers
 	"$(MAKE)" deploy-test-servers
 	"$(MAKE)" deploy-example

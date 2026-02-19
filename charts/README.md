@@ -137,16 +137,16 @@ The CRDs in this Helm chart (`charts/mcp-gateway/crds/`) are synchronized from t
 
 ```bash
 # Regenerate CRDs from Go types and sync to Helm chart
-make generate-crds-all
+make generate-all
 
 # Or just sync existing CRDs to Helm chart
 make update-helm-crds
 
-# Check if CRDs are synchronized
-make check-crd-sync
+# Check if all generated resources are synchronized
+make check
 ```
 
-**Important:** Always run `make generate-crds-all` after modifying Go types in `api/` to keep both locations in sync.
+**Important:** Always run `make generate-all` after modifying Go types in `api/` to keep both locations in sync.
 
 ### Testing Local Changes
 

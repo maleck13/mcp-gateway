@@ -1,3 +1,4 @@
+{{- /* DO NOT EDIT rules - synced from config/rbac/role.yaml by 'make sync-rbac' */ -}}
 {{- if .Values.controller.enabled }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8,60 +9,116 @@ metadata:
     {{- include "mcp-gateway.labels" . | nindent 4 }}
     component: controller
 rules:
-  - apiGroups: ["mcp.kagenti.com"]
-    resources: ["mcpserverregistrations"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["mcp.kagenti.com"]
-    resources: ["mcpserverregistrations/status"]
-    verbs: ["get", "update", "patch"]
-  - apiGroups: ["mcp.kagenti.com"]
-    resources: ["mcpvirtualservers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["mcp.kagenti.com"]
-    resources: ["mcpgatewayextensions"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["mcp.kagenti.com"]
-    resources: ["mcpgatewayextensions/status"]
-    verbs: ["get", "update", "patch"]
-  - apiGroups: ["mcp.kagenti.com"]
-    resources: ["mcpgatewayextensions/finalizers"]
-    verbs: ["update"]
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["httproutes"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["httproutes/status"]
-    verbs: ["get", "update", "patch"]
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gateways"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["referencegrants"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
-  - apiGroups: [""]
-    resources: ["endpoints"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "patch"]
-  - apiGroups: ["networking.istio.io"]
-    resources: ["envoyfilters"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+      - serviceaccounts
+      - services
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - gateways
+      - httproutes
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - gateways/status
+      - httproutes/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - referencegrants
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - mcp.kagenti.com
+    resources:
+      - mcpgatewayextensions
+      - mcpserverregistrations
+      - mcpvirtualservers
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - mcp.kagenti.com
+    resources:
+      - mcpgatewayextensions/finalizers
+      - mcpvirtualservers/finalizers
+    verbs:
+      - update
+  - apiGroups:
+      - mcp.kagenti.com
+    resources:
+      - mcpgatewayextensions/status
+      - mcpserverregistrations/status
+      - mcpvirtualservers/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - networking.istio.io
+    resources:
+      - envoyfilters
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

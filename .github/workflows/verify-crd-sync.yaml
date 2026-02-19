@@ -55,8 +55,11 @@ jobs:
           exit 1
         fi
 
-    - name: Verify CRDs are in sync
-      run: make check-crd-sync
+    - name: Install yq
+      run: make yq
+
+    - name: Verify generated resources are in sync
+      run: make check
 
     - name: Verify Helm chart can be templated
       run: |
@@ -77,7 +80,7 @@ jobs:
         echo "### To fix this issue:" >> $GITHUB_STEP_SUMMARY
         echo "1. If you modified Go types in \`api/\`, run:" >> $GITHUB_STEP_SUMMARY
         echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
-        echo "   make generate-crds-all" >> $GITHUB_STEP_SUMMARY
+        echo "   make generate-all" >> $GITHUB_STEP_SUMMARY
         echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
         echo "   This regenerates deepcopy code and CRDs, then syncs to Helm charts." >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
