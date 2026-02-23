@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -112,4 +113,117 @@ func (r *MCPGatewayExtensionValidator) FindValidMCPGatewayExtsForGateway(ctx con
 type MCPGatewayExtensionFinderValidator interface {
 	HasValidReferenceGrant(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (bool, error)
 	FindValidMCPGatewayExtsForGateway(ctx context.Context, g *gatewayv1.Gateway) ([]*mcpv1alpha1.MCPGatewayExtension, error)
+}
+
+// httpRouteAttachesToListener checks whether an HTTPRoute is attached to the listener
+// targeted by an MCPGatewayExtension. An HTTPRoute attaches to a listener if:
+// 1. The HTTPRoute parentRef has a sectionName that resolves to a listener sharing
+//    the same port as the extension's target listener, OR
+// 2. The HTTPRoute has no sectionName but its hostnames match a listener hostname
+//    on the same port
+func httpRouteAttachesToListener(route *gatewayv1.HTTPRoute, gateway *gatewayv1.Gateway, ext *mcpv1alpha1.MCPGatewayExtension) bool {
+	// find the port for the extension's target listener
+	targetPort, ok := listenerPort(gateway, ext.Spec.TargetRef.SectionName)
+	if !ok {
+		return false
+	}
+
+	// collect all listener hostnames on the same port
+	samePortHostnames := listenersHostnamesByPort(gateway, targetPort)
+	// collect all listener names on the same port
+	samePortNames := listenerNamesByPort(gateway, targetPort)
+
+	for _, parentRef := range route.Spec.ParentRefs {
+		if !parentRefMatchesGateway(parentRef, gateway, route.Namespace) {
+			continue
+		}
+		if parentRef.SectionName != nil {
+			// explicit sectionName: check if it targets a listener on the same port
+			if samePortNames[string(*parentRef.SectionName)] {
+				return true
+			}
+			continue
+		}
+		// no sectionName: match by hostname
+		for _, routeHostname := range route.Spec.Hostnames {
+			for _, listenerHostname := range samePortHostnames {
+				if hostnameMatches(string(routeHostname), listenerHostname) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// listenerPort returns the port for a named listener on the gateway
+func listenerPort(gateway *gatewayv1.Gateway, sectionName string) (gatewayv1.PortNumber, bool) {
+	for _, l := range gateway.Spec.Listeners {
+		if string(l.Name) == sectionName {
+			return l.Port, true
+		}
+	}
+	return 0, false
+}
+
+// listenersHostnamesByPort returns all hostnames from listeners on the given port.
+// listeners without a hostname are skipped (invalid for MCP gateway).
+func listenersHostnamesByPort(gateway *gatewayv1.Gateway, port gatewayv1.PortNumber) []string {
+	var hostnames []string
+	for _, l := range gateway.Spec.Listeners {
+		if l.Port == port && l.Hostname != nil && *l.Hostname != "" {
+			hostnames = append(hostnames, string(*l.Hostname))
+		}
+	}
+	return hostnames
+}
+
+// listenerNamesByPort returns a set of listener names that share the given port
+func listenerNamesByPort(gateway *gatewayv1.Gateway, port gatewayv1.PortNumber) map[string]bool {
+	names := map[string]bool{}
+	for _, l := range gateway.Spec.Listeners {
+		if l.Port == port {
+			names[string(l.Name)] = true
+		}
+	}
+	return names
+}
+
+// parentRefMatchesGateway checks if a parentRef points to the given gateway
+func parentRefMatchesGateway(ref gatewayv1.ParentReference, gateway *gatewayv1.Gateway, routeNamespace string) bool {
+	if ref.Group != nil && string(*ref.Group) != gatewayv1.GroupVersion.Group {
+		return false
+	}
+	if ref.Kind != nil && string(*ref.Kind) != "Gateway" {
+		return false
+	}
+	if string(ref.Name) != gateway.Name {
+		return false
+	}
+	ns := routeNamespace
+	if ref.Namespace != nil {
+		ns = string(*ref.Namespace)
+	}
+	return ns == gateway.Namespace
+}
+
+// hostnameMatches checks if a route hostname matches a listener hostname pattern.
+// supports wildcard listeners (e.g. *.team-a.mcp.local matches server1.team-a.mcp.local)
+func hostnameMatches(routeHostname, listenerHostname string) bool {
+	if listenerHostname == routeHostname {
+		return true
+	}
+	// wildcard listener: *.example.com matches foo.example.com
+	if strings.HasPrefix(listenerHostname, "*.") {
+		suffix := listenerHostname[1:] // ".example.com"
+		// route hostname must have exactly one more label
+		if strings.HasSuffix(routeHostname, suffix) {
+			prefix := routeHostname[:len(routeHostname)-len(suffix)]
+			// prefix must be a single label (no dots)
+			if len(prefix) > 0 && !strings.Contains(prefix, ".") {
+				return true
+			}
+		}
+	}
+	return false
 }

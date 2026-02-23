@@ -63,8 +63,28 @@ When the MCPGatewayExtension becomes ready, the controller automatically creates
 - **MCP Broker/Router Deployment** - Aggregates tools from upstream MCP servers
 - **MCP Broker/Router Service** - Named `mcp-gateway` in the MCPGatewayExtension namespace
 - **EnvoyFilter** - Configures Istio to route requests through the external processor (created in the Gateway's namespace)
+- **ServiceAccount** - For the broker/router pods
+- **Configuration Secret** - `mcp-gateway-config` containing server configuration
 
-> **Note:** The `gateway.publicHost` value must match the hostname configured in your Gateway listener (see [Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md)).
+### What the Controller Configures
+
+The controller reads the targeted Gateway listener (identified by `sectionName`) and uses it to configure the broker/router deployment. The following flags are set automatically based on the listener:
+
+| Flag | Value | Source |
+|------|-------|--------|
+| `--mcp-broker-public-address` | `0.0.0.0:8080` | Fixed |
+| `--mcp-gateway-private-host` | `<gateway>-istio.<namespace>.svc.cluster.local:<listener-port>` | Listener port + Gateway name/namespace |
+| `--mcp-gateway-public-host` | Listener hostname (wildcards like `*.example.com` become `mcp.example.com`) | Listener hostname |
+| `--mcp-router-key` | Auto-generated hash | MCPGatewayExtension UID |
+| `--mcp-gateway-config` | `/config/config.yaml` | Fixed |
+
+The `--mcp-gateway-private-host` flag enables hair-pinning: when a `tools/call` request arrives, the router sends an `initialize` request back through the gateway to establish a backend session. The port in this address matches the listener port from the Gateway spec.
+
+The `--mcp-gateway-public-host` flag tells the router which `Host` header to expect on incoming requests, so it avoids rewriting it during routing.
+
+The **EnvoyFilter** is configured to intercept traffic on the listener's port and route it through the ext_proc (external processor) running on port 50051.
+
+The **configuration secret** only contains MCP server entries for MCPServerRegistrations whose HTTPRoutes attach to the same listener. This ensures team isolation when multiple teams share a single Gateway with different listeners.
 
 ## Post-Installation Configuration
 

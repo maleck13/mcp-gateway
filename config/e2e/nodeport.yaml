@@ -89,9 +89,9 @@ spec:
     - appProtocol: http
       name: team-b-mcp
       nodePort: 30474
-      port: 8080
+      port: 8081
       protocol: TCP
-      targetPort: 8080
+      targetPort: 8081
   selector:
     gateway.networking.k8s.io/gateway-name: shared-gateway
   sessionAffinity: None

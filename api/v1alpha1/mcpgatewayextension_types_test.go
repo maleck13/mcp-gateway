@@ -88,7 +88,7 @@ func TestMCPGatewayExtension_InternalHost(t *testing.T) {
 					TargetRef: tt.targetRef,
 				},
 			}
-			if got := m.InternalHost(); got != tt.want {
+			if got := m.InternalHost(8080); got != tt.want {
 				t.Errorf("InternalHost() = %v, want %v", got, tt.want)
 			}
 		})

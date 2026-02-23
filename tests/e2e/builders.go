@@ -477,6 +477,7 @@ type MCPGatewayExtensionSetup struct {
 	k8sClient        client.Client
 	name             string
 	namespace        string
+	namespaceLabels  map[string]string
 	gatewayName      string
 	gatewayNamespace string
 	sectionName      string
@@ -510,6 +511,13 @@ func (s *MCPGatewayExtensionSetup) WithName(name string) *MCPGatewayExtensionSet
 // InNamespace sets the namespace where the MCPGatewayExtension will be created
 func (s *MCPGatewayExtensionSetup) InNamespace(namespace string) *MCPGatewayExtensionSetup {
 	s.namespace = namespace
+	return s
+}
+
+// WithNamespaceLabels sets labels to apply to the namespace when created
+// This is useful for Gateway listeners with allowedRoutes.namespaces.from: Selector
+func (s *MCPGatewayExtensionSetup) WithNamespaceLabels(labels map[string]string) *MCPGatewayExtensionSetup {
+	s.namespaceLabels = labels
 	return s
 }
 
@@ -713,14 +721,18 @@ func (s *MCPGatewayExtensionSetup) Register(ctx context.Context) *MCPGatewayExte
 		if client.IgnoreNotFound(err) != nil {
 			Expect(err).ToNot(HaveOccurred())
 		}
-		// create namespace
+		// create namespace with labels (e2e label + any custom labels)
+		labels := map[string]string{"e2e": "test"}
+		for k, v := range s.namespaceLabels {
+			labels[k] = v
+		}
 		ns = &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   s.namespace,
-				Labels: map[string]string{"e2e": "test"},
+				Labels: labels,
 			},
 		}
-		GinkgoWriter.Printf("Creating namespace %s\n", s.namespace)
+		GinkgoWriter.Printf("Creating namespace %s with labels %v\n", s.namespace, labels)
 		Expect(s.k8sClient.Create(ctx, ns)).To(Succeed())
 		s.createdNamespace = true
 	}

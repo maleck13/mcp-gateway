@@ -69,41 +69,58 @@
 - When two servers with no prefix are used, the gateway sees and forwards both tools correctly.
 - When two servers with no prefix conflict and one is then modified to have a specified prefix via the MCPServer resource, both tools should become available via the gateway and capable of being invoked
 
-### [multi-gateway] Multiple Isolated MCP Gateways deployed to the same cluster admin
+### [multi-gateway] Multiple Isolated MCP Gateways deployed to the same cluster
 
-- As a platform having deployed multiple instances of the MCP Gateway using the MCPGatewayExtension resource, I should see that they become ready once I have created a valid referencegrant. Once the MCPGatewayExtension is valid, there should a unique deployment of the mcp gateway in the same namespace as the MCPGatewayExtension resources
+- As a platform admin having deployed multiple instances of the MCP Gateway using the MCPGatewayExtension resource, I should see that they become ready once I have created a valid referencegrant. Once the MCPGatewayExtension is valid, there should a unique deployment of the mcp gateway in the same namespace as the MCPGatewayExtension resources
 
-### [multi-gateway] Multiple Isolated MCP Gateways deployed to the same cluster client
+### [multi-gateway] Multiple Isolated MCP Gateways deployed to the same cluster
 - As a client, when multiple isolated gateways are ready and available at different hostnames, I should be able to see a unique list of tools for each gateway based on the MCPServerRegistrations created by each team using the MCPGatewayExtension. Example I should see tools prefixed with team_a on one gateway and team_b on the second gateway
 
 ### [Happy] MCPGatewayExtension with sectionName targets specific listener
 
-- When an MCPGatewayExtension is created with a valid `targetRef.sectionName` that matches a listener name on the Gateway, the extension should become Ready. The controller should read the listener port and hostname from the Gateway configuration. The EnvoyFilter should be created targeting the correct listener port, and the broker-router deployment should have the `--mcp-gateway-public-host` flag set based on the listener hostname.
-
-### [Error] MCPGatewayExtension with invalid sectionName is rejected
-
-- When an MCPGatewayExtension is created with a `targetRef.sectionName` that does not match any listener on the Gateway, the extension should be marked as Invalid with a status message containing "listener not found". No EnvoyFilter or broker-router deployment should be created.
-
-### [Happy] Gateway listener status updated when MCPGatewayExtension becomes Ready
-
-- When an MCPGatewayExtension becomes Ready, the Gateway's listener status should be updated with an MCPGatewayExtension condition. The condition should have type "MCPGatewayExtension", status "True", reason "Programmed", and a message indicating which extension and EnvoyFilter are using the listener.
-
-### [Happy] Gateway listener status condition removed on MCPGatewayExtension deletion
+- When an MCPGatewayExtension is created with a valid `targetRef.sectionName` that matches a listener name on the Gateway, the extension should become Ready. The controller should read the listener port and hostname from the Gateway configuration. The EnvoyFilter should be created targeting the correct listener port, and the broker-router deployment should have the `--mcp-gateway-public-host` flag set based on the listener hostname. The Gateway's listener status should be updated with an MCPGatewayExtension condition. The condition should have type "MCPGatewayExtension", status "True", reason "Programmed", and a message indicating which extension and EnvoyFilter are using the listener.
 
 - When an MCPGatewayExtension is deleted, the MCPGatewayExtension condition should be removed from the Gateway's listener status. The Gateway should no longer show the MCPGatewayExtension condition for that listener.
+
+### [Happy] MCPGatewayExtension with invalid sectionName is rejected
+
+- When an MCPGatewayExtension is created with a `targetRef.sectionName` that does not match any listener on the Gateway, the extension should be marked as Invalid with a status message containing "listener not found". No EnvoyFilter or broker-router deployment should be created.
 
 ### [Happy] Wildcard listener hostname converted to mcp subdomain
 
 - When a Gateway listener has a wildcard hostname like `*.example.com`, and an MCPGatewayExtension targets that listener without a public host annotation override, the broker-router deployment should have `--mcp-gateway-public-host=mcp.example.com`. The wildcard prefix should be replaced with "mcp".
 
-### [Error] MCPGatewayExtension rejected when listener allowedRoutes does not permit namespace
+### [Happy] MCPGatewayExtension rejected when listener allowedRoutes does not permit namespace
 
 - When an MCPGatewayExtension targets a listener that has `allowedRoutes.namespaces.from: Same` and the MCPGatewayExtension is in a different namespace than the Gateway, the extension should be marked as Invalid with a status message indicating the namespace is not allowed.
 
-### [Error] Second MCPGatewayExtension in same namespace is rejected
+### [Happy] Second MCPGatewayExtension in same namespace is rejected
 
 - When a namespace already has one MCPGatewayExtension that is Ready, and a second MCPGatewayExtension is created in the same namespace, the second extension should be marked as Invalid with a status message indicating a conflict. Only one MCPGatewayExtension is allowed per namespace, and the oldest by creation timestamp wins.
 
-### [multi-gateway] Multiple MCPGatewayExtensions on different listener ports
+### [multi-gateway] Shared Gateway with team isolation via sectionName
 
-- When a Gateway has multiple listeners on different ports (e.g., 8080 and 8081), MCPGatewayExtensions in different namespaces can each target a different listener using `targetRef.sectionName`. Both extensions should become Ready, each with their own EnvoyFilter targeting their respective port. The Gateway should have MCPGatewayExtension conditions on both listeners.
+- Given a Gateway with two listeners configured for different teams:
+  - Listener "team-a-external" on port 8080 with `allowedRoutes.namespaces.from: Selector` matching namespace "team-a"
+  - Listener "team-b-external" on port 8081 with `allowedRoutes.namespaces.from: Selector` matching namespace "team-b"
+
+- When team-a creates an MCPGatewayExtension in namespace "team-a" with `targetRef.sectionName: team-a-external`, and team-b creates an MCPGatewayExtension in namespace "team-b" with `targetRef.sectionName: team-b-external`:
+  - Both MCPGatewayExtensions should become Ready
+  - Each team should have their own broker-router deployment in their namespace
+  - The Gateway should show MCPGatewayExtension conditions on both listeners
+
+- When team-a registers MCPServerRegistrations with prefix "team_a_" and team-b registers MCPServerRegistrations with prefix "team_b_":
+  - Clients connecting to the team-a gateway endpoint should only see tools with "team_a_" prefix
+  - Clients connecting to the team-b gateway endpoint should only see tools with "team_b_" prefix
+  - Tool invocations should route to the correct backend for each team
+
+- When team-b attempts to create an MCPGatewayExtension targeting "team-a-external":
+  - The extension should be marked Invalid because the listener's allowedRoutes does not permit routes from namespace "team-b"
+
+### [multi-gateway] MCPGatewayExtension rejected when targeting a listener port already in use
+
+- When a Gateway has two listeners on the same port (e.g. both on port 8080) and an MCPGatewayExtension already targets one of those listeners:
+  - A second MCPGatewayExtension targeting the other listener on the same port should be marked Invalid with a status message indicating a port conflict
+  - The message should identify the conflicting extension and listener
+  - Only one ext_proc can handle a given port, so the oldest MCPGatewayExtension (by creation timestamp) wins
+  - If the winning extension is deleted, the previously rejected extension should reconcile and become Ready

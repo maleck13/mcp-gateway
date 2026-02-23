@@ -12,6 +12,7 @@ If no file path was provided above, default to: tests/e2e/test_cases.md
 
 1. **Read test_cases.md** and compare against existing tests in tests/e2e/happy_path_test.go
 2. **Identify missing test cases** - skip cases already covered
+3. **Look for cases that can be extended without creating entirely new test cases**
 3. **Check for untagged cases** - warn if a test case lacks a tag like [Happy]
 4. **Add new tests** following patterns below
 5. **Run with FIt()** to verify the new test passes

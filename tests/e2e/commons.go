@@ -42,6 +42,26 @@ const (
 	E2E1GatewayURL   = "http://localhost:8004/mcp"
 )
 
+// shared-gateway constants (used by team isolation tests)
+const (
+	SharedGatewayName = "shared-gateway"
+	// Team A listeners
+	TeamAMCPListenerName  = "team-a-mcp"
+	TeamAMCPSListenerName = "team-a-mcps"
+	TeamAPublicHost       = "team-a.127-0-0-1.sslip.io"
+	TeamAGatewayURL       = "http://localhost:8005/mcp"
+	TeamANamespace        = "team-a"
+	TeamANamespaceLabel   = "mcp-team"
+	TeamANamespaceValue   = "team-a"
+	// Team B listeners
+	TeamBMCPListenerName  = "team-b-mcp"
+	TeamBMCPSListenerName = "team-b-mcps"
+	TeamBPublicHost       = "team-b.127-0-0-1.sslip.io"
+	TeamBGatewayURL       = "http://localhost:8006/mcp"
+	TeamBNamespace        = "team-b"
+	TeamBNamespaceValue   = "team-b"
+)
+
 // Gateway URL (configurable via environment)
 var gatewayURL = goenv.GetDefault("GATEWAY_URL", "http://localhost:8001/mcp")
 

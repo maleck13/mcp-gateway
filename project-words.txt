@@ -353,3 +353,7 @@ sectionName
 appsv
 intstr
 apierrors
+AMCP
+AMCPS
+BMCP
+BMCPS

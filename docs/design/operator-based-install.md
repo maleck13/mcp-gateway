@@ -53,7 +53,7 @@ As part of this work, we will add a requirement to set the `sectionName` propert
     sectionName: team-a-external
 ```
 
-The addition of sectionName allows for the following improvements:
+The MCPGatewayExtension currently targets a gateway, but this is a little misleading. It really is configuring the router for a given port. So the addition of sectionName allows for the following improvements:
 
 1) It will better inform the operator which listener port the ext_proc router should listen to for MCP requests, allowing the operator to manage the configuration of the EnvoyFilter directly rather than requiring the user to do it. This will reduce the potential for misconfiguration.
 2) Allow the operator to discover additional configuration based on the gateway configuration and apply it to the router component, such as the public host to allow requests from removing the need for a user to set this manually.
@@ -63,6 +63,7 @@ This change will mean you can have a gateway instance per unique port rather tha
 
 - It will no longer be invalid to target a single gateway with multiple MCPGatewayExtensions. It will become invalid to have multiple extensions target listeners that share a port number.
 - During the reconcile the port for the targeted listener will be read. Valid MCP configuration for a gateway instance targeting that listener will be based on the listener configuration (port number and hostnames).
+- When reconciling an MCPServerRegistration, the controller will only write config to MCPGatewayExtension namespaces whose targeted listener matches the HTTPRoute. Matching is determined by the HTTPRoute's parentRef sectionName resolving to a listener on the same port, or by the HTTPRoute's hostnames matching the listener's hostname pattern (including wildcards). This ensures team isolation when sharing a gateway — each team's broker only receives config for MCP servers attached to its listener.
 
 #### Example Configuration
 
@@ -244,6 +245,7 @@ As this proposed change will allow teams to share a common ingress gateway, ther
 - [ ] Implement HTTPRoute creation for gateway access
 
 ### Completed
+- [x] Filter MCPServerRegistration config by listener (only write config to extensions whose listener matches the HTTPRoute via sectionName or hostname)
 - [x] Add MCPGatewayExtension reconcile (status, validation and resource creation)
 - [x] Add MCPGatewayExtension deletion handling (cleanup)
 - [x] Implement deployment/service resource creation in MCPGatewayExtension reconciler

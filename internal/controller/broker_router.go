@@ -52,7 +52,7 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 	replicas := int32(1)
 
 	command := []string{"./mcp_gateway", fmt.Sprintf("--mcp-broker-public-address=0.0.0.0:%d", brokerHTTPPort),
-		"--mcp-gateway-private-host=" + mcpExt.InternalHost(),
+		"--mcp-gateway-private-host=" + mcpExt.InternalHost(listenerConfig.Port),
 		"--mcp-gateway-config=/config/config.yaml"}
 	// annotation takes precedence over reconciler default
 	pollInterval := mcpExt.PollInterval()

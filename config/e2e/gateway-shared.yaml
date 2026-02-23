@@ -36,7 +36,7 @@ spec:
     # Team B listeners
     - name: team-b-mcp
       hostname: 'team-b.127-0-0-1.sslip.io'
-      port: 8080
+      port: 8081
       protocol: HTTP
       allowedRoutes:
         namespaces:
@@ -45,7 +45,7 @@ spec:
             matchLabels:
               mcp-team: team-b
     - name: team-b-mcps
-      port: 8080
+      port: 8081
       protocol: HTTP
       hostname: '*.team-b.mcp.local'
       allowedRoutes:

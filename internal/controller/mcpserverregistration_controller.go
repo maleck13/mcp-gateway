@@ -197,6 +197,12 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			return ctrl.Result{}, nil
 		}
 		for _, vext := range mcpGatewayExtensions {
+			// only include extensions whose listener matches the HTTPRoute
+			if !httpRouteAttachesToListener(targetRoute, vg, vext) {
+				logger.V(1).Info("skipping mcpgatewayextension: httproute does not attach to targeted listener",
+					"extension", vext.Name, "namespace", vext.Namespace, "sectionName", vext.Spec.TargetRef.SectionName)
+				continue
+			}
 			validNamespaces = append(validNamespaces, vext.Namespace)
 		}
 	}

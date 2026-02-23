@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	"fmt"
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -141,12 +142,12 @@ func (m *MCPGatewayExtension) PublicHost() string {
 }
 
 // InternalHost returns the internal/private host computed from the targetRef
-func (m *MCPGatewayExtension) InternalHost() string {
+func (m *MCPGatewayExtension) InternalHost(port uint32) string {
 	gatewayNamespace := m.Spec.TargetRef.Namespace
 	if gatewayNamespace == "" {
 		gatewayNamespace = m.Namespace
 	}
-	return m.Spec.TargetRef.Name + "-istio." + gatewayNamespace + ".svc.cluster.local:8080"
+	return fmt.Sprintf(m.Spec.TargetRef.Name+"-istio."+gatewayNamespace+".svc.cluster.local:%v", port)
 }
 
 // PollInterval returns the upstream MCP server ping interval from annotations, or empty string if not set

@@ -38,3 +38,9 @@ nodes:
   - containerPort: 30472 # e2e-1 gateway
     hostPort: 8004
     protocol: TCP
+  - containerPort: 30473 # shared-gateway team-a
+    hostPort: 8005
+    protocol: TCP
+  - containerPort: 30474 # shared-gateway team-b
+    hostPort: 8006
+    protocol: TCP
