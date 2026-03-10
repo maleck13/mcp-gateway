@@ -13,6 +13,7 @@ import (
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/maleck13/tdt"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -75,6 +76,9 @@ type mcpBrokerImpl struct {
 
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
+
+	// toolIndex holds the tdt index for relevance-ranked tool discovery
+	toolIndex *tdt.Index
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -155,6 +159,15 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		server.WithHooks(hooks),
 		server.WithToolCapabilities(true),
 	)
+
+	// Initialize the tdt index for tool discovery
+	mcpBkr.toolIndex = tdt.NewIndex()
+	discoveryTool, discoveryHandler := tdt.NewDiscoveryTool(mcpBkr.toolIndex)
+	mcpBkr.listeningMCPServer.AddTools(server.ServerTool{
+		Tool:    discoveryTool,
+		Handler: discoveryHandler,
+	})
+
 	return mcpBkr
 }
 
