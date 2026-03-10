@@ -12,6 +12,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/maleck13/tdt"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -71,6 +72,9 @@ type mcpBrokerImpl struct {
 
 	// managerTickerInterval is the interval for MCP manager backend health checks
 	managerTickerInterval time.Duration
+
+	// toolIndex holds the tdt index for relevance-ranked tool discovery
+	toolIndex *tdt.Index
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -141,6 +145,15 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 		server.WithHooks(hooks),
 		server.WithToolCapabilities(true),
 	)
+
+	// Initialize the tdt index for tool discovery
+	mcpBkr.toolIndex = tdt.NewIndex()
+	discoveryTool, discoveryHandler := tdt.NewDiscoveryTool(mcpBkr.toolIndex)
+	mcpBkr.listeningMCPServer.AddTools(server.ServerTool{
+		Tool:    discoveryTool,
+		Handler: discoveryHandler,
+	})
+
 	return mcpBkr
 }
 
