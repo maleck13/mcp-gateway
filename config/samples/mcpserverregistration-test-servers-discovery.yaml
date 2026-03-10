@@ -1,0 +1,38 @@
+---
+apiVersion: mcp.kagenti.com/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: test-server1
+  namespace: mcp-test
+  labels:
+    'kagenti/mcp': 'true'
+spec:
+  toolPrefix: test1_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-server1-route
+  category: utilities
+  tags:
+    sdk: go-sdk
+    team: platform
+  hint: "General-purpose utilities: greeting, time, request inspection, and latency testing"
+---
+apiVersion: mcp.kagenti.com/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: test-server2
+  namespace: mcp-test
+  labels:
+    'kagenti/mcp': 'true'
+spec:
+  toolPrefix: test2_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-server2-route
+  category: utilities
+  tags:
+    sdk: mcp-go
+    team: platform
+  hint: "Extended utilities: greeting, time management, authentication testing, and chocolate molding"
