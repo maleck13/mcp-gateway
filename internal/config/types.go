@@ -57,13 +57,16 @@ func (config *MCPServersConfig) GetServerConfigByName(serverName string) (*MCPSe
 
 // MCPServer represents a server
 type MCPServer struct {
-	Name       string      `json:"name"                 yaml:"name"`
-	URL        string      `json:"url"                  yaml:"url"`
-	Hostname   string      `json:"hostname,omitempty"   yaml:"hostname,omitempty"`
-	ToolPrefix string      `json:"toolPrefix,omitempty" yaml:"toolPrefix,omitempty"`
-	Auth       *AuthConfig `json:"auth,omitempty"       yaml:"auth,omitempty"`
-	Credential string      `json:"credential,omitempty" yaml:"credential,omitempty"`
-	Enabled    bool        `json:"enabled"              yaml:"enabled"`
+	Name       string            `json:"name"                 yaml:"name"`
+	URL        string            `json:"url"                  yaml:"url"`
+	Hostname   string            `json:"hostname,omitempty"   yaml:"hostname,omitempty"`
+	ToolPrefix string            `json:"toolPrefix,omitempty" yaml:"toolPrefix,omitempty"`
+	Auth       *AuthConfig       `json:"auth,omitempty"       yaml:"auth,omitempty"`
+	Credential string            `json:"credential,omitempty" yaml:"credential,omitempty"`
+	Enabled    bool              `json:"enabled"              yaml:"enabled"`
+	Category   string            `json:"category,omitempty"   yaml:"category,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"       yaml:"tags,omitempty"`
+	Hint       string            `json:"hint,omitempty"       yaml:"hint,omitempty"`
 }
 
 // ID returns a unique id for the a registered server
@@ -77,7 +80,9 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	return existingConfig.Name != mcpServer.Name ||
 		existingConfig.ToolPrefix != mcpServer.ToolPrefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
-		existingConfig.Credential != mcpServer.Credential
+		existingConfig.Credential != mcpServer.Credential ||
+		existingConfig.Category != mcpServer.Category ||
+		existingConfig.Hint != mcpServer.Hint
 }
 
 // Path returns the path part of the mcp url
