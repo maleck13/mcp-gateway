@@ -304,10 +304,13 @@ func (man *MCPManager) findToolConflicts(mcpTools []server.ServerTool) error {
 	for _, tool := range mcpTools {
 		for existingToolName, existingToolInfo := range gatewayServerTools {
 			existingTool := existingToolInfo.Tool
+			// Skip tools without metadata (e.g. discover_tools registered directly on the gateway)
+			if existingTool.Meta == nil || existingTool.Meta.AdditionalFields == nil {
+				continue
+			}
 			// TODO revisit as this is in the tool definition
 			existingToolID, ok := existingTool.Meta.AdditionalFields[gatewayServerID]
 			if !ok {
-				// should never happen as we are adding every time
 				man.logger.Error("unable to check conflict, tool id is missing", "upstream mcp server", man.MCP.ID())
 				continue
 			}
