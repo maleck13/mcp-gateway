@@ -12,6 +12,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
+	"github.com/maleck13/tdt"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -526,6 +527,11 @@ func (m *mockBrokerImpl) Shutdown(_ context.Context) error {
 // ToolAnnotations implements broker.MCPBroker.
 func (m *mockBrokerImpl) ToolAnnotations(_ config.UpstreamMCPID, _ string) (mcp.ToolAnnotation, bool) {
 	return mcp.ToolAnnotation{}, false
+}
+
+// RankedSearch implements broker.MCPBroker.
+func (m *mockBrokerImpl) RankedSearch(_ tdt.Query, _ tdt.SearchOptions) []tdt.ScoredTool {
+	panic("unimplemented")
 }
 
 // ValidateAllServers implements broker.MCPBroker.
