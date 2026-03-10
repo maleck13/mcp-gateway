@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/tests/server2"
+	"github.com/maleck13/tdt"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/require"
 )
@@ -289,4 +291,76 @@ func TestToolAnnotations(t *testing.T) {
 			require.Equal(t, tc.idempotent, *annotation.IdempotentHint, "idempotent mismatch: %#v", annotation)
 		})
 	}
+}
+
+func createTestManagerWithMetadata(t *testing.T, serverName, toolPrefix string, category, hint string, tags map[string]string, tools []mcp.Tool) *upstream.MCPManager {
+	t.Helper()
+	mcpServer := upstream.NewUpstreamMCP(&config.MCPServer{
+		Name:       serverName,
+		ToolPrefix: toolPrefix,
+		URL:        "http://test.local/mcp",
+		Category:   category,
+		Tags:       tags,
+		Hint:       hint,
+	})
+	manager := upstream.NewUpstreamMCPManager(mcpServer, nil, slog.Default(), 0, nil)
+	manager.SetToolsForTesting(tools)
+	return manager
+}
+
+func TestRebuildToolIndex(t *testing.T) {
+	b := NewBroker(logger)
+	bImpl, ok := b.(*mcpBrokerImpl)
+	require.True(t, ok)
+
+	// Create managers with category/tags/hint metadata
+	mgr1 := createTestManagerWithMetadata(t, "observability-server", "obs_",
+		"observability", "Provides metrics and log querying capabilities",
+		map[string]string{"team": "platform"},
+		[]mcp.Tool{
+			{Name: "get_metrics", Description: "Fetch Prometheus metrics from a target"},
+			{Name: "query_logs", Description: "Search structured logs by pattern"},
+		},
+	)
+	mgr2 := createTestManagerWithMetadata(t, "cicd-server", "ci_",
+		"cicd", "CI/CD pipeline management",
+		map[string]string{"team": "devops"},
+		[]mcp.Tool{
+			{Name: "trigger_pipeline", Description: "Trigger a CI/CD pipeline run"},
+		},
+	)
+
+	bImpl.mcpServers["obs"] = mgr1
+	bImpl.mcpServers["ci"] = mgr2
+
+	// Simulate a tool discovery callback triggering index rebuild
+	bImpl.rebuildToolIndex()
+
+	// RankedSearch for metrics-related tools
+	results := b.RankedSearch(tdt.Query{Text: "metrics prometheus"}, tdt.SearchOptions{TopK: 5})
+	require.NotEmpty(t, results, "expected ranked results for metrics query")
+	require.Equal(t, "get_metrics", results[0].ToolName, "expected get_metrics to be top result")
+
+	// RankedSearch with category filter
+	results = b.RankedSearch(tdt.Query{Category: "cicd"}, tdt.SearchOptions{})
+	require.Len(t, results, 1)
+	require.Equal(t, "trigger_pipeline", results[0].ToolName)
+
+	// RankedSearch for logs
+	results = b.RankedSearch(tdt.Query{Text: "search logs"}, tdt.SearchOptions{TopK: 5})
+	require.NotEmpty(t, results)
+	require.Equal(t, "query_logs", results[0].ToolName, "expected query_logs to be top result for log search")
+}
+
+func TestDiscoverToolRegistered(t *testing.T) {
+	b := NewBroker(logger)
+	tools := b.MCPServer().ListTools()
+	found := false
+	for name := range tools {
+		if name == "discover_tools" {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "discover_tools should be registered on the gateway MCP server")
 }
