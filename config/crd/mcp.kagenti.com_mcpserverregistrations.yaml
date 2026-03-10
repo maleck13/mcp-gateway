@@ -73,6 +73,10 @@ spec:
               MCPServerRegistrationSpec defines the desired state of MCPServerRegistration.
               It specifies which HTTPRoutes point to MCP servers and how their tools should be federated.
             properties:
+              category:
+                description: Category classifies this server for tool discovery (e.g.
+                  "observability", "cicd").
+                type: string
               credentialRef:
                 description: |-
                   CredentialRef references a Secret containing authentication credentials for the MCP server.
@@ -91,6 +95,11 @@ spec:
                 required:
                 - name
                 type: object
+              hint:
+                description: |-
+                  Hint provides a human-readable description of the server's capabilities,
+                  used by tool discovery to improve search relevance.
+                type: string
               path:
                 default: /mcp
                 description: |-
@@ -98,6 +107,12 @@ spec:
                   If not specified, defaults to "/mcp".
                   This allows connecting to MCP servers that use custom paths like "/v1/mcp" or "/api/mcp".
                 type: string
+              tags:
+                additionalProperties:
+                  type: string
+                description: 'Tags are key-value pairs for filtering and discovery
+                  (e.g. {"department": "platform"}).'
+                type: object
               targetRef:
                 description: |-
                   TargetRef specifies an HTTPRoute that points to a backend MCP server.

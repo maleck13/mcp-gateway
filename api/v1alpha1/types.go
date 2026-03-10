@@ -53,6 +53,19 @@ type MCPServerRegistrationSpec struct {
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// Category classifies this server for tool discovery (e.g. "observability", "cicd").
+	// +optional
+	Category string `json:"category,omitempty"`
+
+	// Tags are key-value pairs for filtering and discovery (e.g. {"department": "platform"}).
+	// +optional
+	Tags map[string]string `json:"tags,omitempty"`
+
+	// Hint provides a human-readable description of the server's capabilities,
+	// used by tool discovery to improve search relevance.
+	// +optional
+	Hint string `json:"hint,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.
