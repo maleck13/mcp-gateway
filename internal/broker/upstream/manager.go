@@ -69,6 +69,9 @@ type MCP interface {
 	Ping(context.Context) error
 }
 
+// OnToolsChanged is a callback invoked after tools are updated for a managed server.
+type OnToolsChanged func()
+
 // MCPManager manages a single backend MCPServer for the broker. It does not act on behalf of clients. It is the only thing that should be connecting to the MCP Server for the broker. It handles tools updates, disconnection, notifications, liveness checks and updating the status for the MCP server. It is responsible for adding and removing tools to the broker. It is intended to be long lived and have 1:1 relationship with a backend MCP server.
 type MCPManager struct {
 	MCP MCP
@@ -96,6 +99,9 @@ type MCPManager struct {
 	stopOnce sync.Once     // ensures Stop() is only executed once
 	done     chan struct{} // triggers the exit of the select and routine
 	status   ServerValidationStatus
+
+	// onToolsChanged is called after tools are updated to notify the broker
+	onToolsChanged OnToolsChanged
 }
 
 // DefaultTickerInterval is the default interval for backend health checks
@@ -104,7 +110,7 @@ const DefaultTickerInterval = time.Minute * 1
 // NewUpstreamMCPManager creates a new MCPManager for managing a single upstream MCP server.
 // The addTools and removeTools callbacks are used to update the gateway's tool registry.
 // The tickerInterval controls how often the manager checks backend health (use 0 for default).
-func NewUpstreamMCPManager(upstream MCP, gatewaySever ToolsAdderDeleter, logger *slog.Logger, tickerInterval time.Duration, policy mcpv1alpha1.InvalidToolPolicy) *MCPManager {
+func NewUpstreamMCPManager(upstream MCP, gatewaySever ToolsAdderDeleter, logger *slog.Logger, tickerInterval time.Duration, policy mcpv1alpha1.InvalidToolPolicy, onToolsChanged OnToolsChanged) *MCPManager {
 	if tickerInterval <= 0 {
 		tickerInterval = DefaultTickerInterval
 	}
@@ -120,6 +126,7 @@ func NewUpstreamMCPManager(upstream MCP, gatewaySever ToolsAdderDeleter, logger 
 		toolsMap:          map[string]mcp.Tool{},
 		servedToolsMap:    map[string]mcp.Tool{},
 		serverTools:       []server.ServerTool{},
+		onToolsChanged:    onToolsChanged,
 	}
 }
 
@@ -277,6 +284,10 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.logger.Debug("internal tools", "upstream mcp server", man.MCP.ID(), "total", len(man.serverTools))
 	man.toolsLock.Unlock()
 	man.setStatus(nil, numberOfTools, invalidTools)
+
+	if man.onToolsChanged != nil {
+		man.onToolsChanged()
+	}
 }
 
 func (man *MCPManager) shouldFetchTools(event eventType) bool {

@@ -206,7 +206,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
 			m.logger.Info("starting new manager", "server id", mcpServer.ID())
-			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy, m.rebuildToolIndex)
 			m.mcpServers[mcpServer.ID()] = manager
 			go func() {
 				m.logger.Info("Starting manager for", "mcpID", mcpServer.ID())
@@ -221,6 +221,36 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 	}
 	m.vsLock.Unlock()
 	m.logger.Debug("Broker OnConfigChange done", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(conf.Servers))
+}
+
+// rebuildToolIndex collects tools from all managers and rebuilds the tdt index.
+// Called by MCPManager callbacks after tool discovery completes.
+func (m *mcpBrokerImpl) rebuildToolIndex() {
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
+
+	var servers []tdt.ServerMetadata
+	for _, manager := range m.mcpServers {
+		cfg := manager.MCP.GetConfig()
+		tools := manager.GetManagedTools()
+		toolInfos := make([]tdt.ToolInfo, len(tools))
+		for i, t := range tools {
+			toolInfos[i] = tdt.ToolInfo{
+				Name:        t.Name,
+				Description: t.Description,
+			}
+		}
+		servers = append(servers, tdt.ServerMetadata{
+			ServerName: cfg.Name,
+			ToolPrefix: cfg.ToolPrefix,
+			Category:   cfg.Category,
+			Tags:       cfg.Tags,
+			Hint:       cfg.Hint,
+			Tools:      toolInfos,
+		})
+	}
+	m.toolIndex.Update(servers)
+	m.logger.Debug("tdt index rebuilt", "servers", len(servers))
 }
 
 func (m *mcpBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]*upstream.MCPManager {
