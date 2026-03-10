@@ -44,6 +44,9 @@ type MCPBroker interface {
 	// HandleStatusRequest handles HTTP status endpoint requests
 	HandleStatusRequest(w http.ResponseWriter, r *http.Request)
 
+	// RankedSearch performs relevance-ranked tool discovery
+	RankedSearch(query tdt.Query, opts tdt.SearchOptions) []tdt.ScoredTool
+
 	// Shutdown closes any resources associated with this Broker
 	Shutdown(ctx context.Context) error
 
@@ -251,6 +254,11 @@ func (m *mcpBrokerImpl) rebuildToolIndex() {
 	}
 	m.toolIndex.Update(servers)
 	m.logger.Debug("tdt index rebuilt", "servers", len(servers))
+}
+
+// RankedSearch performs relevance-ranked tool discovery using the tdt index.
+func (m *mcpBrokerImpl) RankedSearch(query tdt.Query, opts tdt.SearchOptions) []tdt.ScoredTool {
+	return m.toolIndex.RankedSearch(query, opts)
 }
 
 func (m *mcpBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]*upstream.MCPManager {
