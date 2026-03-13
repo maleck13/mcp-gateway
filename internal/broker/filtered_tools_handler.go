@@ -13,6 +13,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 var authorizedToolsHeader = http.CanonicalHeaderKey("x-authorized-tools")
@@ -20,9 +21,9 @@ var virtualMCPHeader = http.CanonicalHeaderKey("x-mcp-virtualserver")
 
 const allowedToolsClaimKey = "allowed-tools"
 
-// FilterTools reduces the tool set based on authorization headers.
-// Priority: x-authorized-tools JWT filtering, then x-mcp-virtualserver filtering.
-func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
+// FilterTools reduces the tool set based on authorization headers and session tool selection.
+// Priority: x-authorized-tools JWT filtering, then x-mcp-virtualserver filtering, then session tool selection.
+func (broker *mcpBrokerImpl) FilterTools(ctx context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
 	broker.logger.Info("FilterTools called", "input_tools_count", len(mcpRes.Tools))
 	tools := mcpRes.Tools
 	emptyTools := []mcp.Tool{}
@@ -40,6 +41,10 @@ func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.L
 	// filter out any gateway specific meta data we are storing internally before sending to clients
 	tools = broker.removeGatewayMeta(tools)
 	broker.logger.Debug("FilterTools virtual server result", "output_tools_count", len(tools))
+
+	// step 3: apply per-session tool selection (only when tool discovery is enabled)
+	tools = broker.applySessionToolSelection(ctx, tools)
+	broker.logger.Debug("FilterTools session selection result", "output_tools_count", len(tools))
 
 	// ensure we never return nil (would serialize as null instead of [])
 	if tools == nil {
@@ -192,6 +197,45 @@ func (broker *mcpBrokerImpl) applyVirtualServerFilter(headers http.Header, tools
 		}
 	}
 
+	return filtered
+}
+
+// applySessionToolSelection filters tools to only those selected for the current session.
+// Broker-native tools (e.g. discover_tools) always pass through so the agent can re-query.
+// Returns tools unchanged when tool discovery is disabled, no session exists, or no selection is stored.
+func (broker *mcpBrokerImpl) applySessionToolSelection(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
+	if !broker.enableToolDiscovery || broker.sessionCache == nil {
+		return tools
+	}
+
+	session := server.ClientSessionFromContext(ctx)
+	if session == nil {
+		return tools
+	}
+
+	sessionID := session.SessionID()
+	selected, exists, err := broker.GetSessionToolSelection(ctx, sessionID)
+	if err != nil {
+		broker.logger.Error("failed to get session tool selection", "error", err, "sessionID", sessionID)
+		return tools
+	}
+	if !exists {
+		return tools
+	}
+
+	allowedSet := make(map[string]struct{}, len(selected))
+	for _, name := range selected {
+		allowedSet[name] = struct{}{}
+	}
+
+	var filtered []mcp.Tool
+	for _, tool := range tools {
+		if _, ok := allowedSet[tool.Name]; ok {
+			filtered = append(filtered, tool)
+		} else if broker.IsBrokerTool(tool.Name) {
+			filtered = append(filtered, tool)
+		}
+	}
 	return filtered
 }
 

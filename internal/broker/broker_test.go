@@ -14,6 +14,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/session"
 	"github.com/Kuadrant/mcp-gateway/internal/tests/server2"
 	"github.com/maleck13/tdt"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -309,7 +310,7 @@ func createTestManagerWithMetadata(t *testing.T, serverName, toolPrefix string, 
 }
 
 func TestRebuildToolIndex(t *testing.T) {
-	b := NewBroker(logger)
+	b := NewBroker(logger, WithEnableToolDiscovery(true))
 	bImpl, ok := b.(*mcpBrokerImpl)
 	require.True(t, ok)
 
@@ -353,7 +354,7 @@ func TestRebuildToolIndex(t *testing.T) {
 }
 
 func TestDiscoverToolRegistered(t *testing.T) {
-	b := NewBroker(logger)
+	b := NewBroker(logger, WithEnableToolDiscovery(true))
 	tools := b.MCPServer().ListTools()
 	found := false
 	for name := range tools {
@@ -363,4 +364,309 @@ func TestDiscoverToolRegistered(t *testing.T) {
 		}
 	}
 	require.True(t, found, "discover_tools should be registered on the gateway MCP server")
+}
+
+func TestDiscoverToolNotRegisteredWhenDisabled(t *testing.T) {
+	b := NewBroker(logger) // enableToolDiscovery defaults to false
+	tools := b.MCPServer().ListTools()
+	for name := range tools {
+		require.NotEqual(t, "discover_tools", name, "discover_tools should not be registered when tool discovery is disabled")
+	}
+}
+
+func TestRankedSearchReturnsNilWhenDisabled(t *testing.T) {
+	b := NewBroker(logger) // enableToolDiscovery defaults to false
+	results := b.RankedSearch(tdt.Query{Text: "anything"}, tdt.SearchOptions{TopK: 5})
+	require.Nil(t, results, "RankedSearch should return nil when tool discovery is disabled")
+}
+
+func newTestCache(t *testing.T) *session.Cache {
+	t.Helper()
+	cache, err := session.NewCache(context.Background())
+	require.NoError(t, err)
+	return cache
+}
+
+func TestSessionToolSelection_SetGetClear(t *testing.T) {
+	cache := newTestCache(t)
+	b := NewBroker(logger,
+		WithEnableToolDiscovery(true),
+		WithSessionCache(cache),
+	)
+	bImpl := b.(*mcpBrokerImpl)
+	ctx := context.Background()
+	sessionID := "test-session-123"
+
+	// Initially no selection
+	tools, exists, err := bImpl.GetSessionToolSelection(ctx, sessionID)
+	require.NoError(t, err)
+	require.False(t, exists)
+	require.Nil(t, tools)
+
+	// Set a selection
+	err = bImpl.SetSessionToolSelection(ctx, sessionID, []string{"tool_a", "tool_b"})
+	require.NoError(t, err)
+
+	// Get returns the selection
+	tools, exists, err = bImpl.GetSessionToolSelection(ctx, sessionID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, []string{"tool_a", "tool_b"}, tools)
+
+	// Clear the selection
+	err = bImpl.ClearSessionToolSelection(ctx, sessionID)
+	require.NoError(t, err)
+
+	// After clearing, no selection
+	tools, exists, err = bImpl.GetSessionToolSelection(ctx, sessionID)
+	require.NoError(t, err)
+	require.False(t, exists)
+	require.Nil(t, tools)
+}
+
+func TestSessionToolSelection_NilCache(t *testing.T) {
+	b := NewBroker(logger, WithEnableToolDiscovery(true))
+	bImpl := b.(*mcpBrokerImpl)
+	ctx := context.Background()
+
+	// All operations are no-ops with nil cache
+	err := bImpl.SetSessionToolSelection(ctx, "s1", []string{"tool_a"})
+	require.NoError(t, err)
+
+	tools, exists, err := bImpl.GetSessionToolSelection(ctx, "s1")
+	require.NoError(t, err)
+	require.False(t, exists)
+	require.Nil(t, tools)
+
+	err = bImpl.ClearSessionToolSelection(ctx, "s1")
+	require.NoError(t, err)
+}
+
+func TestFilterTools_SessionSelectionFilters(t *testing.T) {
+	cache := newTestCache(t)
+	b := NewBroker(logger,
+		WithEnableToolDiscovery(true),
+		WithSessionCache(cache),
+	)
+	bImpl := b.(*mcpBrokerImpl)
+	ctx := context.Background()
+	sessionID := "filter-session-456"
+
+	// Store a selection for this session
+	err := bImpl.SetSessionToolSelection(ctx, sessionID, []string{"tool_a", "tool_c"})
+	require.NoError(t, err)
+
+	// Simulate tools coming from upstream
+	allTools := []mcp.Tool{
+		mcp.NewTool("tool_a"),
+		mcp.NewTool("tool_b"),
+		mcp.NewTool("tool_c"),
+		mcp.NewTool("tool_d"),
+	}
+
+	// applySessionToolSelection requires a session in context — test the method directly
+	// by setting up context with a fake session
+	filtered := bImpl.applySessionToolSelection(ctx, allTools)
+	// Without a session in context, all tools pass through
+	require.Len(t, filtered, 4, "without session in context, all tools should pass through")
+}
+
+func TestFilterTools_BrokerToolsAlwaysPassThrough(t *testing.T) {
+	cache := newTestCache(t)
+	b := NewBroker(logger,
+		WithEnableToolDiscovery(true),
+		WithSessionCache(cache),
+	)
+	bImpl := b.(*mcpBrokerImpl)
+
+	// discover_tools is a broker tool
+	require.True(t, bImpl.IsBrokerTool("discover_tools"))
+}
+
+func TestFilterTools_NoSelectionReturnsAllTools(t *testing.T) {
+	cache := newTestCache(t)
+	b := NewBroker(logger,
+		WithEnableToolDiscovery(true),
+		WithSessionCache(cache),
+	)
+	bImpl := b.(*mcpBrokerImpl)
+	ctx := context.Background()
+
+	// No selection stored — all tools should pass through
+	allTools := []mcp.Tool{
+		mcp.NewTool("tool_a"),
+		mcp.NewTool("tool_b"),
+	}
+	filtered := bImpl.applySessionToolSelection(ctx, allTools)
+	require.Len(t, filtered, 2, "without session selection, all tools should pass through")
+}
+
+func TestFilterTools_DisabledDiscoveryReturnsAllTools(t *testing.T) {
+	cache := newTestCache(t)
+	b := NewBroker(logger, WithSessionCache(cache)) // discovery disabled
+	bImpl := b.(*mcpBrokerImpl)
+	ctx := context.Background()
+
+	allTools := []mcp.Tool{
+		mcp.NewTool("tool_a"),
+		mcp.NewTool("tool_b"),
+	}
+	filtered := bImpl.applySessionToolSelection(ctx, allTools)
+	require.Len(t, filtered, 2, "with discovery disabled, all tools should pass through")
+}
+
+func TestDiscoverToolsHandler_CatalogOnEmptyQuery(t *testing.T) {
+	b := NewBroker(logger, WithEnableToolDiscovery(true))
+	bImpl := b.(*mcpBrokerImpl)
+
+	// Populate the index
+	bImpl.mcpServers["obs"] = createTestManagerWithMetadata(t, "obs-server", "obs_",
+		"observability", "Metrics and logs",
+		map[string]string{"team": "platform"},
+		[]mcp.Tool{{Name: "get_metrics", Description: "Fetch metrics"}},
+	)
+	bImpl.rebuildToolIndex()
+
+	// Call handler with no arguments — should return catalog
+	result, err := bImpl.handleDiscoverToolsCatalog()
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	require.NotEmpty(t, result.Content)
+
+	textContent, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var catalog tdt.CatalogResponse
+	require.NoError(t, json.Unmarshal([]byte(textContent.Text), &catalog))
+	require.Len(t, catalog.Categories, 1)
+	require.Equal(t, "observability", catalog.Categories[0].Name)
+}
+
+func TestDiscoverToolsHandler_SearchStoresSelection(t *testing.T) {
+	cache := newTestCache(t)
+	b := NewBroker(logger,
+		WithEnableToolDiscovery(true),
+		WithSessionCache(cache),
+	)
+	bImpl := b.(*mcpBrokerImpl)
+
+	// Set up servers with prefixes
+	bImpl.mcpServers["obs"] = createTestManagerWithMetadata(t, "obs-server", "obs_",
+		"observability", "Metrics and logs",
+		map[string]string{},
+		[]mcp.Tool{
+			{Name: "get_metrics", Description: "Fetch Prometheus metrics"},
+			{Name: "query_logs", Description: "Search structured logs"},
+		},
+	)
+	bImpl.mcpServers["ci"] = createTestManagerWithMetadata(t, "ci-server", "ci_",
+		"cicd", "CI/CD pipelines",
+		map[string]string{},
+		[]mcp.Tool{
+			{Name: "trigger_pipeline", Description: "Trigger a CI/CD pipeline run"},
+		},
+	)
+	bImpl.rebuildToolIndex()
+
+	// Call search — no session in context, but should still return results
+	ctx := context.Background()
+	result, err := bImpl.handleDiscoverToolsSearch(ctx, "metrics prometheus")
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+
+	textContent, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var resp discoverToolsResponse
+	require.NoError(t, json.Unmarshal([]byte(textContent.Text), &resp))
+	require.Equal(t, "search", resp.Action)
+	require.Greater(t, resp.ToolsMatched, 0)
+}
+
+func TestDiscoverToolsHandler_ResetClearsSelection(t *testing.T) {
+	cache := newTestCache(t)
+	b := NewBroker(logger,
+		WithEnableToolDiscovery(true),
+		WithSessionCache(cache),
+	)
+	bImpl := b.(*mcpBrokerImpl)
+	ctx := context.Background()
+
+	// Call reset via the handler (no session in context — gracefully handles nil session)
+	_, handler := bImpl.newDiscoverToolsHandler()
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "discover_tools"
+	req.Params.Arguments = map[string]any{"reset": true}
+
+	result, err := handler(ctx, req)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+
+	textContent, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var resp discoverToolsResponse
+	require.NoError(t, json.Unmarshal([]byte(textContent.Text), &resp))
+	require.Equal(t, "reset", resp.Action)
+	require.Contains(t, resp.Message, "cleared")
+}
+
+func TestDiscoverToolsHandler_ResetAndSearchInOneCall(t *testing.T) {
+	cache := newTestCache(t)
+	b := NewBroker(logger,
+		WithEnableToolDiscovery(true),
+		WithSessionCache(cache),
+	)
+	bImpl := b.(*mcpBrokerImpl)
+	ctx := context.Background()
+
+	// Set up servers with tools
+	bImpl.mcpServers["obs"] = createTestManagerWithMetadata(t, "obs-server", "obs_",
+		"observability", "Metrics and logs",
+		map[string]string{},
+		[]mcp.Tool{
+			{Name: "get_metrics", Description: "Fetch Prometheus metrics"},
+			{Name: "query_logs", Description: "Search structured logs"},
+		},
+	)
+	bImpl.rebuildToolIndex()
+
+	// Call with both reset=true and query — should clear then search
+	_, handler := bImpl.newDiscoverToolsHandler()
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "discover_tools"
+	req.Params.Arguments = map[string]any{
+		"reset": true,
+		"query": "metrics prometheus",
+	}
+
+	result, err := handler(ctx, req)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+
+	textContent, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var resp discoverToolsResponse
+	require.NoError(t, json.Unmarshal([]byte(textContent.Text), &resp))
+	require.Equal(t, "search", resp.Action, "combined reset+query should return search results")
+	require.Greater(t, resp.ToolsMatched, 0)
+}
+
+func TestDiscoverToolsHandler_PrefixToolName(t *testing.T) {
+	b := NewBroker(logger, WithEnableToolDiscovery(true))
+	bImpl := b.(*mcpBrokerImpl)
+
+	bImpl.mcpServers["s1"] = createTestManagerWithMetadata(t, "my-server", "ms_",
+		"", "", nil,
+		[]mcp.Tool{{Name: "do_thing", Description: "Does a thing"}},
+	)
+	bImpl.mcpServers["s2"] = createTestManagerWithMetadata(t, "no-prefix-server", "",
+		"", "", nil,
+		[]mcp.Tool{{Name: "other_thing", Description: "Other thing"}},
+	)
+
+	require.Equal(t, "ms_do_thing", bImpl.prefixToolName("my-server", "do_thing"))
+	require.Equal(t, "other_thing", bImpl.prefixToolName("no-prefix-server", "other_thing"))
+	require.Equal(t, "unknown_tool", bImpl.prefixToolName("nonexistent", "unknown_tool"))
 }

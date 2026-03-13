@@ -16,7 +16,7 @@ spec:
   tags:
     sdk: go-sdk
     team: platform
-  hint: "General-purpose utilities: greeting, time, request inspection, and latency testing"
+  hint: "General-purpose utilities: greeting, time, request inspection, and latency testing. Contact info and messaging"
 ---
 apiVersion: mcp.kagenti.com/v1alpha1
 kind: MCPServerRegistration
@@ -36,3 +36,22 @@ spec:
     sdk: mcp-go
     team: platform
   hint: "Extended utilities: greeting, time management, authentication testing, and chocolate molding"
+---
+apiVersion: mcp.kagenti.com/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: test-server3
+  namespace: mcp-test
+  labels:
+    'kagenti/mcp': 'true'
+spec:
+  toolPrefix: test3_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-server3-route
+  category: dining
+  tags:
+    sdk: fastmcp
+    team: platform
+  hint: "Dining and travel: restaurant search, table reservations, city guides, weather, and math utilities"

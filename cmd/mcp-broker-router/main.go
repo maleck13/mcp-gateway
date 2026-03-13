@@ -69,6 +69,7 @@ var (
 	loglevel                  int
 	logFormat                 string
 	enforceToolFilteringFlag  bool
+	enableToolDiscoveryFlag  bool
 )
 
 func main() {
@@ -134,6 +135,7 @@ func main() {
 	flag.Int64Var(&brokerWriteTimeoutSecs, "mcp-broker-write-timeout", 0, "HTTP write timeout in seconds for the broker. Default 0 (disabled) for SSE notification support. Set > 0 to enable timeout.")
 	flag.Int64Var(&managerTickerIntervalSecs, "mcp-check-interval", 60, "interval in seconds for MCP manager backend health checks. Default 60 seconds.")
 	flag.BoolVar(&enforceToolFilteringFlag, "enforce-tool-filtering", false, "when enabled an x-authorized-tools header will be needed to return any tools")
+	flag.BoolVar(&enableToolDiscoveryFlag, "enable-tool-discovery", false, "when enabled, the tdt tool discovery index, discover_tools MCP tool, and per-session tool selection are active")
 	flag.Parse()
 
 	loggerOpts := &slog.HandlerOptions{}
@@ -203,7 +205,7 @@ func main() {
 	}
 
 	managerTickerInterval := time.Duration(managerTickerIntervalSecs) * time.Second
-	brokerServer, mcpBroker, mcpServer := setUpBroker(mcpBrokerAddrFlag, enforceToolFilteringFlag, jwtSessionMgr, brokerWriteTimeoutSecs, managerTickerInterval)
+	brokerServer, mcpBroker, mcpServer := setUpBroker(mcpBrokerAddrFlag, enforceToolFilteringFlag, enableToolDiscoveryFlag, jwtSessionMgr, sessionCache, brokerWriteTimeoutSecs, managerTickerInterval)
 	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap)
 	mcpConfig.RegisterObserver(router)
 	mcpConfig.RegisterObserver(mcpBroker)
@@ -281,7 +283,7 @@ func main() {
 	}
 }
 
-func setUpBroker(address string, toolFiltering bool, sessionManager *session.JWTManager, writeTimeoutSecs int64, managerTickerInterval time.Duration) (*http.Server, broker.MCPBroker, *server.StreamableHTTPServer) {
+func setUpBroker(address string, toolFiltering bool, enableToolDiscovery bool, sessionManager *session.JWTManager, sessionCache *session.Cache, writeTimeoutSecs int64, managerTickerInterval time.Duration) (*http.Server, broker.MCPBroker, *server.StreamableHTTPServer) {
 
 	mux := http.NewServeMux()
 
@@ -312,6 +314,8 @@ func setUpBroker(address string, toolFiltering bool, sessionManager *session.JWT
 		broker.WithEnforceToolFilter(toolFiltering),
 		broker.WithTrustedHeadersPublicKey(os.Getenv("TRUSTED_HEADER_PUBLIC_KEY")),
 		broker.WithManagerTickerInterval(managerTickerInterval),
+		broker.WithEnableToolDiscovery(enableToolDiscovery),
+		broker.WithSessionCache(sessionCache),
 	)
 
 	var streamableHTTPServer = server.NewStreamableHTTPServer(
