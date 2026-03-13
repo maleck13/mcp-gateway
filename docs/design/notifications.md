@@ -334,6 +334,25 @@ The request ID mapping created for the original `elicitation/create` is cleaned 
 
 3. **Request ID Mapping Security**: The gateway-assigned request IDs in elicitation mappings should be cryptographically random and unguessable to prevent unauthorized access to tool call sessions.
 
+### Known Issues
+
+#### Tool Discovery Notification Timing
+
+When the broker's `discover_tools` handler sends a `notifications/tools/list_changed` notification from within a tool call handler, mcp-go upgrades the POST response to an SSE stream and delivers the notification event **before** the tool call result event. This creates a race condition:
+
+1. Client receives `tools/list_changed` notification on the SSE stream
+2. Client triggers a `tools/list` re-fetch (a new HTTP round-trip)
+3. Client receives the `discover_tools` tool call result ("Found N tools" with tool names)
+4. Client generates a response referencing the discovered tools — but the `tools/list` re-fetch from step 2 hasn't completed yet, so the agent's tool definitions are stale
+
+The result: the agent sees "Found 2 time tools" but reports it cannot call them because their definitions aren't loaded.
+
+**Why the first search works**: On the first `discover_tools` call, the agent already has all tool definitions from the initial `tools/list` at session start. The discovered tools are already callable. After scoping, subsequent `tools/list` calls return only the subset. When a second `discover_tools` call finds *different* tools, those tools aren't in the agent's current definitions.
+
+**Mitigation**: The `discover_tools` response deliberately omits tool names and instead returns only the match count and a message instructing the agent to wait for its tool definitions to update via the `notifications/tools/list_changed` notification. Since the agent has no tool names to act on prematurely, it cannot attempt to call tools it doesn't yet have definitions for. The notification triggers a `tools/list` re-fetch, and the agent's tool definitions are updated for the next turn.
+
+**Alternative fix (not implemented)**: Intercept the `discover_tools` tool call response in the router's response handler (ext_proc). When the router sees a `tools/call` response for `discover_tools` that performed a search or reset, it can send the `tools/list_changed` notification after the response has been flushed to the client. This would avoid the SSE upgrade race entirely and would allow tool names to be included in the response.
+
 ### Resolved Questions
 
 1. **Elicitation Mapping Cleanup**: Mappings persist for the tool call duration and are removed when the response stream ends. In Redis-backed deployments, a 1-hour TTL acts as a safety net for orphaned entries.

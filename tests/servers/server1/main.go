@@ -171,6 +171,41 @@ func slowTool(
 	}, nil, nil
 }
 
+// A tool that returns fake contact information for friends
+func friendsTool(
+	_ context.Context,
+	_ *mcp.CallToolRequest,
+	_ struct{},
+) (*mcp.CallToolResult, any, error) {
+	contacts := `[
+  {"name": "Alice Johnson", "email": "alice@example.com", "phone": "+1-555-0101"},
+  {"name": "Bob Smith", "email": "bob@example.com", "phone": "+1-555-0102"},
+  {"name": "Charlie Brown", "email": "charlie@example.com", "phone": "+1-555-0103"}
+]`
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: contacts},
+		},
+	}, nil, nil
+}
+
+type sendMessageArgs struct {
+	Message    string   `json:"message" jsonschema:"the message to send"`
+	Recipients []string `json:"recipients" jsonschema:"list of contact names to send the message to"`
+}
+
+func sendMessageTool(
+	_ context.Context,
+	_ *mcp.CallToolRequest,
+	params sendMessageArgs,
+) (*mcp.CallToolResult, any, error) {
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Message sent to %d recipients: %s", len(params.Recipients), params.Message)},
+		},
+	}, nil, nil
+}
+
 func promptHi(
 	_ context.Context,
 	req *mcp.GetPromptRequest,
@@ -194,6 +229,8 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "time", Description: "get current time", Annotations: &mcp.ToolAnnotations{Title: "time"}}, timeTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "slow", Description: "delay N seconds"}, slowTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "headers", Description: "get headers"}, headersTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "friends", Description: "list contact information of friends"}, friendsTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "send_message", Description: "send a message to friends or contacts"}, sendMessageTool)
 
 	toolManager := &dynamicToolManager{server: server}
 	mcp.AddTool(server, &mcp.Tool{Name: "add_tool", Description: "dynamically add a new tool (triggers notifications/tools/list_changed)", Annotations: &mcp.ToolAnnotations{Title: "add"}}, toolManager.addTool)

@@ -69,7 +69,8 @@ var (
 	loglevel                  int
 	logFormat                 string
 	enforceToolFilteringFlag  bool
-	invalidToolPolicyFlag     string
+	invalidToolPolicyFlag    string
+	enableToolDiscoveryFlag  bool
 )
 
 func main() {
@@ -136,6 +137,7 @@ func main() {
 	flag.Int64Var(&managerTickerIntervalSecs, "mcp-check-interval", 60, "interval in seconds for MCP manager backend health checks. Default 60 seconds.")
 	flag.BoolVar(&enforceToolFilteringFlag, "enforce-tool-filtering", false, "when enabled an x-authorized-tools header will be needed to return any tools")
 	flag.StringVar(&invalidToolPolicyFlag, "invalid-tool-policy", "FilterOut", "policy for upstream tools with invalid schemas: FilterOut (default) or RejectServer")
+	flag.BoolVar(&enableToolDiscoveryFlag, "enable-tool-discovery", false, "when enabled, the tdt tool discovery index, discover_tools MCP tool, and per-session tool selection are active")
 	flag.Parse()
 
 	loggerOpts := &slog.HandlerOptions{}
@@ -210,16 +212,7 @@ func main() {
 	}
 
 	managerTickerInterval := time.Duration(managerTickerIntervalSecs) * time.Second
-	if managerTickerInterval <= 0 {
-		panic("flag mcp-check-interval cannot be 0 or less seconds")
-	}
-	mcpBroker := broker.NewBroker(logger.With("component", "broker"),
-		broker.WithEnforceToolFilter(enforceToolFilteringFlag),
-		broker.WithTrustedHeadersPublicKey(os.Getenv("TRUSTED_HEADER_PUBLIC_KEY")),
-		broker.WithManagerTickerInterval(managerTickerInterval),
-		broker.WithInvalidToolPolicy(invalidToolPolicy),
-	)
-	brokerServer, mcpServer := setUpHTTPServer(mcpBrokerAddrFlag, mcpBroker, jwtSessionMgr, brokerWriteTimeoutSecs)
+	brokerServer, mcpBroker, mcpServer := setUpBroker(mcpBrokerAddrFlag, enforceToolFilteringFlag, enableToolDiscoveryFlag, invalidToolPolicy, jwtSessionMgr, sessionCache, brokerWriteTimeoutSecs, managerTickerInterval)
 	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap)
 	mcpConfig.RegisterObserver(router)
 	mcpConfig.RegisterObserver(mcpBroker)
@@ -297,7 +290,7 @@ func main() {
 	}
 }
 
-func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager *session.JWTManager, writeTimeoutSecs int64) (*http.Server, *server.StreamableHTTPServer) {
+func setUpBroker(address string, toolFiltering bool, enableToolDiscovery bool, invalidToolPolicy mcpv1alpha1.InvalidToolPolicy, sessionManager *session.JWTManager, sessionCache *session.Cache, writeTimeoutSecs int64, managerTickerInterval time.Duration) (*http.Server, broker.MCPBroker, *server.StreamableHTTPServer) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
@@ -318,6 +311,18 @@ func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager 
 		WriteTimeout: writeTimeout,
 	}
 
+	if managerTickerInterval <= 0 {
+		panic("flag mcp-check-interval cannot be 0 or less seconds")
+	}
+	mcpBroker := broker.NewBroker(logger.With("component", "broker"),
+		broker.WithEnforceToolFilter(toolFiltering),
+		broker.WithTrustedHeadersPublicKey(os.Getenv("TRUSTED_HEADER_PUBLIC_KEY")),
+		broker.WithManagerTickerInterval(managerTickerInterval),
+		broker.WithInvalidToolPolicy(invalidToolPolicy),
+		broker.WithEnableToolDiscovery(enableToolDiscovery),
+		broker.WithSessionCache(sessionCache),
+	)
+
 	streamableHTTPOpts := []server.StreamableHTTPOption{
 		server.WithStreamableHTTPServer(httpSrv),
 	}
@@ -337,7 +342,7 @@ func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager 
 	mux.HandleFunc("/status/", mcpBroker.HandleStatusRequest)
 	mux.Handle("/mcp", streamableHTTPServer)
 
-	return httpSrv, streamableHTTPServer
+	return httpSrv, mcpBroker, streamableHTTPServer
 }
 
 func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map) (*grpc.Server, *mcpRouter.ExtProcServer) {

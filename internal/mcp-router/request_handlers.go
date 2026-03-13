@@ -288,6 +288,14 @@ func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) 
 		err = infoErr
 	}
 	if err != nil {
+		// Tool not found on any upstream — check if it's a broker-native tool
+		// (e.g. discover_tools). If so, route the request to the broker.
+		if s.Broker.IsBrokerTool(toolName) {
+			s.Logger.DebugContext(ctx, "routing broker-native tool call to broker", "toolName", toolName)
+			span.SetAttributes(attribute.String("mcp.route", "broker-native-tool"))
+			headers := NewHeaders().WithMCPMethod(mcpReq.Method).WithMCPServerName("mcpBroker")
+			return calculatedResponse.WithRequestBodyHeadersResponse(headers.Build()).Build()
+		}
 		s.Logger.DebugContext(ctx, "no server for tool", "toolName", toolName)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "tool not found")

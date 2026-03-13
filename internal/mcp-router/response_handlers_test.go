@@ -534,6 +534,11 @@ func (m *mockBrokerImpl) RankedSearch(_ tdt.Query, _ tdt.SearchOptions) []tdt.Sc
 	panic("unimplemented")
 }
 
+// IsBrokerTool implements broker.MCPBroker.
+func (m *mockBrokerImpl) IsBrokerTool(_ string) bool {
+	return false
+}
+
 // ValidateAllServers implements broker.MCPBroker.
 func (m *mockBrokerImpl) ValidateAllServers() broker.StatusResponse {
 	panic("unimplemented")

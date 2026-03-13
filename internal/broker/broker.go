@@ -3,6 +3,7 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,10 +14,15 @@ import (
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/session"
 	"github.com/maleck13/tdt"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+// tdtToolSelectionKey is the reserved hash field in the session cache for storing
+// per-session tool selections made via the discover_tools tool.
+const tdtToolSelectionKey = "__tdt_tools"
 
 var _ config.Observer = &mcpBrokerImpl{}
 
@@ -47,6 +53,10 @@ type MCPBroker interface {
 	// RankedSearch performs relevance-ranked tool discovery
 	RankedSearch(query tdt.Query, opts tdt.SearchOptions) []tdt.ScoredTool
 
+	// IsBrokerTool returns true if the named tool is registered directly on
+	// the broker's MCP server rather than on an upstream server.
+	IsBrokerTool(name string) bool
+
 	// Shutdown closes any resources associated with this Broker
 	Shutdown(ctx context.Context) error
 
@@ -66,6 +76,9 @@ type mcpBrokerImpl struct {
 	// listeningMCPServer returns an actual listening MCP server that federates registered MCP servers
 	listeningMCPServer *server.MCPServer
 
+	// brokerTools tracks tool names registered directly on the broker (not on upstream servers)
+	brokerTools map[string]bool
+
 	logger *slog.Logger
 
 	// enforceToolFilter if set will ensure only a filtered list of tools is returned this list is based on the x-authorized-tools trusted header
@@ -79,6 +92,14 @@ type mcpBrokerImpl struct {
 
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
+
+	// enableToolDiscovery gates all tdt features: the tool index, discover_tools
+	// registration, ranked search, and per-session tool selection filtering.
+	enableToolDiscovery bool
+
+	// sessionCache stores per-session tool selections alongside backend session mappings.
+	// Optional — if nil, session tool selection is a no-op.
+	sessionCache *session.Cache
 
 	// toolIndex holds the tdt index for relevance-ranked tool discovery
 	toolIndex *tdt.Index
@@ -118,6 +139,22 @@ func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 	}
 }
 
+// WithEnableToolDiscovery enables tdt-based tool discovery features: the tool index,
+// discover_tools MCP tool, ranked search, and per-session tool selection filtering.
+func WithEnableToolDiscovery(enable bool) func(mb *mcpBrokerImpl) {
+	return func(mb *mcpBrokerImpl) {
+		mb.enableToolDiscovery = enable
+	}
+}
+
+// WithSessionCache sets the session cache used for per-session tool selections.
+// Only effective when tool discovery is enabled.
+func WithSessionCache(cache *session.Cache) func(mb *mcpBrokerImpl) {
+	return func(mb *mcpBrokerImpl) {
+		mb.sessionCache = cache
+	}
+}
+
 // NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceToolFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
@@ -125,6 +162,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		logger:                logger,
 		virtualServers:        map[string]*config.VirtualServer{},
 		managerTickerInterval: time.Second * 60,
+		brokerTools:           map[string]bool{},
 	}
 
 	for _, option := range opts {
@@ -163,13 +201,16 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		server.WithToolCapabilities(true),
 	)
 
-	// Initialize the tdt index for tool discovery
-	mcpBkr.toolIndex = tdt.NewIndex()
-	discoveryTool, discoveryHandler := tdt.NewDiscoveryTool(mcpBkr.toolIndex)
-	mcpBkr.listeningMCPServer.AddTools(server.ServerTool{
-		Tool:    discoveryTool,
-		Handler: discoveryHandler,
-	})
+	// Initialize the tdt index for tool discovery when enabled
+	if mcpBkr.enableToolDiscovery {
+		mcpBkr.toolIndex = tdt.NewIndex()
+		discoveryTool, discoveryHandler := mcpBkr.newDiscoverToolsHandler()
+		mcpBkr.listeningMCPServer.AddTools(server.ServerTool{
+			Tool:    discoveryTool,
+			Handler: discoveryHandler,
+		})
+		mcpBkr.brokerTools[discoveryTool.Name] = true
+	}
 
 	return mcpBkr
 }
@@ -209,7 +250,11 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
 			m.logger.Info("starting new manager", "server id", mcpServer.ID())
-			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy, m.rebuildToolIndex)
+			var onToolsChanged upstream.OnToolsChanged
+			if m.enableToolDiscovery {
+				onToolsChanged = m.rebuildToolIndex
+			}
+			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy, onToolsChanged)
 			m.mcpServers[mcpServer.ID()] = manager
 			go func() {
 				m.logger.Info("Starting manager for", "mcpID", mcpServer.ID())
@@ -257,8 +302,174 @@ func (m *mcpBrokerImpl) rebuildToolIndex() {
 }
 
 // RankedSearch performs relevance-ranked tool discovery using the tdt index.
+// Returns nil when tool discovery is disabled.
 func (m *mcpBrokerImpl) RankedSearch(query tdt.Query, opts tdt.SearchOptions) []tdt.ScoredTool {
+	if !m.enableToolDiscovery || m.toolIndex == nil {
+		return nil
+	}
 	return m.toolIndex.RankedSearch(query, opts)
+}
+
+// notifyToolsListChanged sends a notifications/tools/list_changed notification
+// to the client so it re-fetches tools/list after a session scope change.
+func (m *mcpBrokerImpl) notifyToolsListChanged(ctx context.Context) {
+	mcpServer := server.ServerFromContext(ctx)
+	if mcpServer == nil {
+		return
+	}
+	if err := mcpServer.SendNotificationToClient(ctx, "notifications/tools/list_changed", nil); err != nil {
+		m.logger.Error("failed to send tools/list_changed notification", "error", err)
+	}
+}
+
+// discoverToolsResponse is the JSON response for the discover_tools tool.
+type discoverToolsResponse struct {
+	Action       string `json:"action"`
+	ToolsMatched int    `json:"tools_matched,omitempty"`
+	Message      string `json:"message"`
+}
+
+// newDiscoverToolsHandler returns the MCP tool definition and handler for the broker's
+// discover_tools tool. It supports three modes:
+//   - reset=true: clears the session tool selection
+//   - query provided: runs RankedSearch, stores results as session selection
+//   - empty/no params: returns the catalog
+func (m *mcpBrokerImpl) newDiscoverToolsHandler() (mcp.Tool, server.ToolHandlerFunc) {
+	tool := mcp.Tool{
+		Name: "discover_tools",
+		Description: "Search for relevant tools and scope your session to only use the matched tools. " +
+			"Call with a query to find and select tools. Call with reset=true to clear the selection and see all tools again. " +
+			"Call with both reset=true and a query to clear the current selection and search in one step. " +
+			"Call with no parameters to see the full catalog of available tool categories. " +
+			"IMPORTANT: After a search or reset, your tool list will be updated on the NEXT turn. " +
+			"You MUST end your current turn after calling this tool. Do NOT attempt to call any " +
+			"discovered tools in the same turn — they will only appear in your tool list on the next turn.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"query": map[string]any{
+					"type":        "string",
+					"description": "Natural language description of what tools you need (e.g. 'weather data', 'CI/CD pipelines')",
+				},
+				"reset": map[string]any{
+					"type":        "boolean",
+					"description": "Set to true to clear the current tool selection and restore access to all tools",
+				},
+			},
+		},
+		Annotations: mcp.ToolAnnotation{
+			ReadOnlyHint: mcp.ToBoolPtr(true),
+		},
+	}
+
+	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := req.GetArguments()
+
+		// Check for reset flag — clear the selection first
+		wantsReset := false
+		if resetVal, ok := args["reset"]; ok {
+			if reset, isBool := resetVal.(bool); isBool && reset {
+				wantsReset = true
+				session := server.ClientSessionFromContext(ctx)
+				if session != nil {
+					if err := m.ClearSessionToolSelection(ctx, session.SessionID()); err != nil {
+						m.logger.Error("failed to clear session tool selection", "error", err)
+					}
+					// Don't notify here — if a query follows, handleDiscoverToolsSearch
+					// will store a new selection and notify after the final state is set.
+					// Notifying now would cause the client to re-fetch tools/list before
+					// the new selection is in place, leading to a stale tool set.
+				}
+			}
+		}
+
+		// Check for query — search and scope (works after a reset too)
+		if queryVal, ok := args["query"]; ok {
+			if queryStr, isStr := queryVal.(string); isStr && queryStr != "" {
+				return m.handleDiscoverToolsSearch(ctx, queryStr)
+			}
+		}
+
+		// Reset-only (no query): notify now that the final state is established
+		if wantsReset {
+			m.notifyToolsListChanged(ctx)
+			resp := discoverToolsResponse{
+				Action:  "reset",
+				Message: "Tool selection cleared. All available tools will now be returned by tools/list.",
+			}
+			data, _ := json.Marshal(resp)
+			return mcp.NewToolResultText(string(data)), nil
+		}
+
+		// Default: return catalog
+		return m.handleDiscoverToolsCatalog()
+	}
+
+	return tool, handler
+}
+
+// handleDiscoverToolsSearch runs a ranked search and stores the results as the session selection.
+func (m *mcpBrokerImpl) handleDiscoverToolsSearch(ctx context.Context, queryStr string) (*mcp.CallToolResult, error) {
+	allResults := m.toolIndex.RankedSearch(tdt.Query{Text: queryStr}, tdt.SearchOptions{})
+
+	// Keep only tools with meaningful relevance (score > 0.60)
+	results := make([]tdt.ScoredTool, 0, len(allResults))
+	for _, r := range allResults {
+		if r.Score > 0.60 {
+			results = append(results, r)
+		}
+	}
+
+	// Build prefixed tool names for the session selection
+	prefixedNames := make([]string, 0, len(results))
+	for _, r := range results {
+		prefixed := m.prefixToolName(r.ServerName, r.ToolName)
+		prefixedNames = append(prefixedNames, prefixed)
+	}
+
+	// Store the selection in the session cache
+	session := server.ClientSessionFromContext(ctx)
+	if session != nil && m.sessionCache != nil {
+		if err := m.SetSessionToolSelection(ctx, session.SessionID(), prefixedNames); err != nil {
+			m.logger.Error("failed to store session tool selection", "error", err)
+			// Don't fail the tool call — return results anyway
+		}
+	}
+	m.notifyToolsListChanged(ctx)
+
+	resp := discoverToolsResponse{
+		Action:       "search",
+		ToolsMatched: len(results),
+		Message:      fmt.Sprintf("Found %d tools matching your query. Your tool list will update on the next turn. End your current turn now — do not attempt to call any tools until the next turn when your updated tool definitions are available. Call with reset=true to restore all tools.", len(results)),
+	}
+	data, _ := json.Marshal(resp)
+	return mcp.NewToolResultText(string(data)), nil
+}
+
+// handleDiscoverToolsCatalog returns the full catalog.
+func (m *mcpBrokerImpl) handleDiscoverToolsCatalog() (*mcp.CallToolResult, error) {
+	catalog := m.toolIndex.Catalog()
+	data, err := json.Marshal(catalog)
+	if err != nil {
+		return mcp.NewToolResultError("failed to marshal catalog: " + err.Error()), nil
+	}
+	return mcp.NewToolResultText(string(data)), nil
+}
+
+// prefixToolName returns the prefixed tool name by looking up the server's prefix.
+func (m *mcpBrokerImpl) prefixToolName(serverName, toolName string) string {
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
+	for _, manager := range m.mcpServers {
+		if manager.MCPName() == serverName {
+			prefix := manager.MCP.GetPrefix()
+			if prefix == "" {
+				return toolName
+			}
+			return prefix + toolName
+		}
+	}
+	return toolName
 }
 
 func (m *mcpBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]*upstream.MCPManager {
@@ -313,6 +524,10 @@ func (m *mcpBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 	}
 
 	return nil, fmt.Errorf("tool name %q doesn't match any configured server", tool)
+}
+
+func (m *mcpBrokerImpl) IsBrokerTool(name string) bool {
+	return m.brokerTools[name]
 }
 
 func (m *mcpBrokerImpl) Shutdown(_ context.Context) error {
@@ -377,4 +592,46 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 		"overallValid", response.OverallValid)
 
 	return response
+}
+
+// SetSessionToolSelection stores a list of selected tool names for the given session.
+func (m *mcpBrokerImpl) SetSessionToolSelection(ctx context.Context, sessionID string, toolNames []string) error {
+	if m.sessionCache == nil {
+		return nil
+	}
+	data, err := json.Marshal(toolNames)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tool selection: %w", err)
+	}
+	_, err = m.sessionCache.AddSession(ctx, sessionID, tdtToolSelectionKey, string(data))
+	return err
+}
+
+// GetSessionToolSelection retrieves the per-session tool selection.
+// Returns (nil, false, nil) if no selection exists.
+func (m *mcpBrokerImpl) GetSessionToolSelection(ctx context.Context, sessionID string) ([]string, bool, error) {
+	if m.sessionCache == nil {
+		return nil, false, nil
+	}
+	sessions, err := m.sessionCache.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, false, err
+	}
+	raw, ok := sessions[tdtToolSelectionKey]
+	if !ok || raw == "" {
+		return nil, false, nil
+	}
+	var toolNames []string
+	if err := json.Unmarshal([]byte(raw), &toolNames); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal tool selection: %w", err)
+	}
+	return toolNames, true, nil
+}
+
+// ClearSessionToolSelection removes the per-session tool selection.
+func (m *mcpBrokerImpl) ClearSessionToolSelection(ctx context.Context, sessionID string) error {
+	if m.sessionCache == nil {
+		return nil
+	}
+	return m.sessionCache.RemoveServerSession(ctx, sessionID, tdtToolSelectionKey)
 }
