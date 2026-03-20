@@ -309,7 +309,6 @@ The result: the agent sees "Found 2 time tools" but reports it cannot call them 
 
 The notification timing race still exists (the notification arrives before the tool call result in the SSE stream), but it is harmless because the agent ends its turn immediately and does not act until the next turn, by which time the `tools/list` re-fetch has completed.
 
-**Alternative fix (not implemented)**: Intercept the `discover_tools` tool call response in the router's response handler (ext_proc). When the router sees a `tools/call` response for `discover_tools` that performed a search or reset, it can send the `tools/list_changed` notification after the response has been flushed to the client. This would avoid the SSE upgrade race entirely and would allow tool names to be included in the response.
 
 ### Open Questions
 
