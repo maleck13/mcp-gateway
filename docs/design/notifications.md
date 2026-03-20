@@ -301,7 +301,13 @@ The result: the agent sees "Found 2 time tools" but reports it cannot call them 
 
 **Why the first search works**: On the first `discover_tools` call, the agent already has all tool definitions from the initial `tools/list` at session start. The discovered tools are already callable. After scoping, subsequent `tools/list` calls return only the subset. When a second `discover_tools` call finds *different* tools, those tools aren't in the agent's current definitions.
 
-**Mitigation**: The `discover_tools` response deliberately omits tool names and instead returns only the match count and a message instructing the agent to wait for its tool definitions to update via the `notifications/tools/list_changed` notification. Since the agent has no tool names to act on prematurely, it cannot attempt to call tools it doesn't yet have definitions for. The notification triggers a `tools/list` re-fetch, and the agent's tool definitions are updated for the next turn.
+**Mitigation**: Two mechanisms work together to avoid the race:
+
+1. **Tool description instructs the agent to end its turn**: The `discover_tools` tool description contains an explicit instruction: "You MUST end your current turn after calling this tool. Do NOT attempt to call any discovered tools in the same turn." This gives the `tools/list` re-fetch (triggered by the notification) time to complete before the agent acts on the next turn.
+
+2. **Response omits tool names**: The `discover_tools` response returns only the match count and a message, not individual tool names. Since the agent has no tool names to act on prematurely, it cannot attempt to call tools it doesn't yet have definitions for.
+
+The notification timing race still exists (the notification arrives before the tool call result in the SSE stream), but it is harmless because the agent ends its turn immediately and does not act until the next turn, by which time the `tools/list` re-fetch has completed.
 
 **Alternative fix (not implemented)**: Intercept the `discover_tools` tool call response in the router's response handler (ext_proc). When the router sees a `tools/call` response for `discover_tools` that performed a search or reset, it can send the `tools/list_changed` notification after the response has been flushed to the client. This would avoid the SSE upgrade race entirely and would allow tool names to be included in the response.
 
