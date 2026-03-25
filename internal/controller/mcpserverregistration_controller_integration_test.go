@@ -191,6 +191,10 @@ func newMCPServerReconciler(configWriter *mockMCPServerConfigReaderWriter) *MCPR
 		Scheme:             testK8sClient.Scheme(),
 		DirectAPIReader:    testK8sClient,
 		ConfigReaderWriter: configWriter,
+		MCPExtFinderValidator: &MCPGatewayExtensionValidator{
+			Client:         testIndexedClient,
+			DirectAPIReader: testK8sClient,
+		},
 	}
 }
 
@@ -316,7 +320,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// verify RemoveMCPServer was called
-			Expect(configWriter.removedServers).To(ContainElement(fmt.Sprintf("%s/%s", httpRouteName, "default")))
+			Expect(configWriter.removedServers).To(ContainElement(fmt.Sprintf("%s/%s", "default", resourceName)))
 
 			Eventually(func(g Gomega) {
 				deleted := &mcpv1alpha1.MCPServerRegistration{}
