@@ -13,6 +13,10 @@ MCP Gateway is an Envoy-based gateway for Model Context Protocol (MCP) servers. 
 
 To explore the code base, if the codebase-memory-mcp is configured, index the project and use this MCP server and use its tools to explore the project as much as possible.
 
+
+Is it about finding FILES? use 'fd' 
+Is it about finding TEXT/strings? use 'rg' 
+
 ## Architecture
 
 ```
