@@ -915,7 +915,7 @@ func TestMCPManager_manage_FilterOutPolicy(t *testing.T) {
 	}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
-	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil)
 
 	manager.manage(context.Background(), eventTypeTimer)
 
@@ -938,7 +938,7 @@ func TestMCPManager_manage_FilterOutPolicy_AllInvalid(t *testing.T) {
 	}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
-	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil)
 
 	manager.manage(context.Background(), eventTypeTimer)
 
@@ -958,7 +958,7 @@ func TestMCPManager_manage_RejectServerPolicy(t *testing.T) {
 	}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
-	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyRejectServer)
+	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyRejectServer, nil)
 
 	manager.manage(context.Background(), eventTypeTimer)
 
@@ -975,7 +975,7 @@ func TestMCPManager_manage_AllValidTools(t *testing.T) {
 	mock.tools = []mcp.Tool{validTool("tool1"), validTool("tool2")}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
-	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil)
 
 	manager.manage(context.Background(), eventTypeTimer)
 

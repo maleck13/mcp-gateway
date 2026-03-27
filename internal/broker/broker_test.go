@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
@@ -304,7 +305,7 @@ func createTestManagerWithMetadata(t *testing.T, serverName, toolPrefix string, 
 		Tags:       tags,
 		Hint:       hint,
 	})
-	manager := upstream.NewUpstreamMCPManager(mcpServer, nil, slog.Default(), 0, nil)
+	manager := upstream.NewUpstreamMCPManager(mcpServer, nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil)
 	manager.SetToolsForTesting(tools)
 	return manager
 }
@@ -382,7 +383,7 @@ func TestRankedSearchReturnsNilWhenDisabled(t *testing.T) {
 
 func newTestCache(t *testing.T) *session.Cache {
 	t.Helper()
-	cache, err := session.NewCache(context.Background())
+	cache, err := session.NewCache()
 	require.NoError(t, err)
 	return cache
 }
