@@ -1,5 +1,5 @@
 ---
-apiVersion: mcp.kagenti.com/v1alpha1
+apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPServerRegistration
 metadata:
   name: test-server1
@@ -18,7 +18,7 @@ spec:
     team: platform
   hint: "General-purpose utilities: greeting, time, request inspection, and latency testing. Contact info and messaging"
 ---
-apiVersion: mcp.kagenti.com/v1alpha1
+apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPServerRegistration
 metadata:
   name: test-server2
@@ -37,7 +37,7 @@ spec:
     team: platform
   hint: "Extended utilities: greeting, time management, authentication testing, and chocolate molding"
 ---
-apiVersion: mcp.kagenti.com/v1alpha1
+apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPServerRegistration
 metadata:
   name: test-server3

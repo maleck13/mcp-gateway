@@ -531,7 +531,7 @@ func (m *mockBrokerImpl) ToolAnnotations(_ config.UpstreamMCPID, _ string) (mcp.
 
 // RankedSearch implements broker.MCPBroker.
 func (m *mockBrokerImpl) RankedSearch(_ tdt.Query, _ tdt.SearchOptions) []tdt.ScoredTool {
-	panic("unimplemented")
+	return nil
 }
 
 // IsBrokerTool implements broker.MCPBroker.

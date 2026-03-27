@@ -2,10 +2,6 @@
 
 This file provides guidance to Claude Code when working with this repository.
 
-# Exploration
-
-If the codebase-memory-mcp is configured, index the project and use this MCP server to explore the project as much as possible.
-
 ## Project Overview
 
 MCP Gateway is an Envoy-based gateway for Model Context Protocol (MCP) servers. Single binary (`mcp-broker-router`) with three components:

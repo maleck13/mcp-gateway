@@ -141,7 +141,7 @@ func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 
 // WithEnableToolDiscovery enables tdt-based tool discovery features: the tool index,
 // discover_tools MCP tool, ranked search, and per-session tool selection filtering.
-func WithEnableToolDiscovery(enable bool) func(mb *mcpBrokerImpl) {
+func WithEnableToolDiscovery(enable bool) Option {
 	return func(mb *mcpBrokerImpl) {
 		mb.enableToolDiscovery = enable
 	}
@@ -149,7 +149,7 @@ func WithEnableToolDiscovery(enable bool) func(mb *mcpBrokerImpl) {
 
 // WithSessionCache sets the session cache used for per-session tool selections.
 // Only effective when tool discovery is enabled.
-func WithSessionCache(cache *session.Cache) func(mb *mcpBrokerImpl) {
+func WithSessionCache(cache *session.Cache) Option {
 	return func(mb *mcpBrokerImpl) {
 		mb.sessionCache = cache
 	}
@@ -277,7 +277,7 @@ func (m *mcpBrokerImpl) rebuildToolIndex() {
 	m.mcpLock.RLock()
 	defer m.mcpLock.RUnlock()
 
-	var servers []tdt.ServerMetadata
+	servers := make([]tdt.ServerMetadata, 0, len(m.mcpServers))
 	for _, manager := range m.mcpServers {
 		cfg := manager.MCP.GetConfig()
 		tools := manager.GetManagedTools()

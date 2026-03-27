@@ -4,6 +4,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/url"
 	"sync"
 )
@@ -82,7 +83,8 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 		existingConfig.Hostname != mcpServer.Hostname ||
 		existingConfig.Credential != mcpServer.Credential ||
 		existingConfig.Category != mcpServer.Category ||
-		existingConfig.Hint != mcpServer.Hint
+		existingConfig.Hint != mcpServer.Hint ||
+		!maps.Equal(existingConfig.Tags, mcpServer.Tags)
 }
 
 // Path returns the path part of the mcp url
