@@ -9,7 +9,7 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
-	github.com/maleck13/tdt v0.0.0-20260331112505-5f4b62cadafb
+	github.com/maleck13/tdt v0.0.0-20260331124401-4674147f410c
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
