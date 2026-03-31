@@ -412,13 +412,17 @@ func (m *mcpBrokerImpl) newDiscoverToolsHandler() (mcp.Tool, server.ToolHandlerF
 func (m *mcpBrokerImpl) handleDiscoverToolsSearch(ctx context.Context, queryStr string) (*mcp.CallToolResult, error) {
 	allResults := m.toolIndex.RankedSearch(tdt.Query{Text: queryStr}, tdt.SearchOptions{})
 
-	// Keep only tools with meaningful relevance. With dampened BM25 normalization
-	// (score/(max+k)), strong multi-term matches score ~0.5-0.7 and weak single-term
-	// matches score ~0.15-0.25.
+	// Filter by relative threshold: keep tools scoring at least 50% of the top result.
+	// This adapts to any corpus size — strong matches anchor the threshold and weak
+	// matches get dropped regardless of their absolute score.
 	results := make([]tdt.ScoredTool, 0, len(allResults))
-	for _, r := range allResults {
-		if r.Score > 0.30 {
-			results = append(results, r)
+	if len(allResults) > 0 {
+		topScore := allResults[0].Score // RankedSearch returns descending order
+		cutoff := topScore * 0.50
+		for _, r := range allResults {
+			if r.Score >= cutoff {
+				results = append(results, r)
+			}
 		}
 	}
 
