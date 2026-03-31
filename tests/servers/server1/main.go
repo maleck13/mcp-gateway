@@ -225,15 +225,15 @@ func main() {
 	flag.Parse()
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test mcp server 1"}, nil)
-	mcp.AddTool(server, &mcp.Tool{Name: "greet", Description: "say hi"}, sayHi)
-	mcp.AddTool(server, &mcp.Tool{Name: "time", Description: "get current time", Annotations: &mcp.ToolAnnotations{Title: "time"}}, timeTool)
-	mcp.AddTool(server, &mcp.Tool{Name: "slow", Description: "delay N seconds"}, slowTool)
-	mcp.AddTool(server, &mcp.Tool{Name: "headers", Description: "get headers"}, headersTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "greet", Description: "Send a message to a contact"}, sayHi)
+	mcp.AddTool(server, &mcp.Tool{Name: "time", Description: "Return the current date and time", Annotations: &mcp.ToolAnnotations{Title: "time"}}, timeTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "slow", Description: "Wait for a specified number of seconds with progress notifications"}, slowTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "headers", Description: "Return the HTTP request headers received by the server"}, headersTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "friends", Description: "list contact information of friends"}, friendsTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "send_message", Description: "send a message to friends or contacts"}, sendMessageTool)
 
 	toolManager := &dynamicToolManager{server: server}
-	mcp.AddTool(server, &mcp.Tool{Name: "add_tool", Description: "dynamically add a new tool (triggers notifications/tools/list_changed)", Annotations: &mcp.ToolAnnotations{Title: "add"}}, toolManager.addTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "add_tool", Description: "Dynamically register a new tool on the server at runtime", Annotations: &mcp.ToolAnnotations{Title: "add"}}, toolManager.addTool)
 
 	server.AddPrompt(&mcp.Prompt{Name: "greet"}, promptHi)
 

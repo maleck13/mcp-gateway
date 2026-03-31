@@ -412,10 +412,12 @@ func (m *mcpBrokerImpl) newDiscoverToolsHandler() (mcp.Tool, server.ToolHandlerF
 func (m *mcpBrokerImpl) handleDiscoverToolsSearch(ctx context.Context, queryStr string) (*mcp.CallToolResult, error) {
 	allResults := m.toolIndex.RankedSearch(tdt.Query{Text: queryStr}, tdt.SearchOptions{})
 
-	// Keep only tools with meaningful relevance (score > 0.60)
+	// Keep only tools with meaningful relevance. With dampened BM25 normalization
+	// (score/(max+k)), strong multi-term matches score ~0.5-0.7 and weak single-term
+	// matches score ~0.15-0.25.
 	results := make([]tdt.ScoredTool, 0, len(allResults))
 	for _, r := range allResults {
-		if r.Score > 0.60 {
+		if r.Score > 0.30 {
 			results = append(results, r)
 		}
 	}

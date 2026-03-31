@@ -13,7 +13,7 @@ mcp = FastMCP("FastMCP test server")
 
 @mcp.tool
 def time() -> str:
-    """Return the current time."""
+    """Return the current date and time."""
     return str(datetime.now())
 
 @mcp.tool
@@ -39,7 +39,7 @@ def get_weather(city: str) -> dict:
 
 @mcp.tool
 async def slow(seconds: int, ctx: Context) -> str:
-    """A long-running tool that waits N seconds, notifying the client of progress"""
+    """Wait for a specified number of seconds with progress notifications"""
 
     start_time = pytime.time()
     print(f"Slow tool will wait for {seconds} seconds")
@@ -56,7 +56,7 @@ async def slow(seconds: int, ctx: Context) -> str:
 
 @mcp.tool
 def get_headers() -> dict[str, str]:
-    """Gets the HTTP headers."""
+    """Return the HTTP request headers received by the server."""
     # Note that get_http_headers returns init headers
     # See https://github.com/jlowin/fastmcp/issues/1233
     return get_http_headers(include_all=True)

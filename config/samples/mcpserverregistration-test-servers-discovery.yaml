@@ -12,11 +12,11 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: mcp-server1-route
-  category: utilities
+  category: contact messaging
   tags:
     sdk: go-sdk
     team: platform
-  hint: "General-purpose utilities: greeting, time, request inspection, and latency testing. Contact info and messaging"
+  hint: "messaging and Contact information"
 ---
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPServerRegistration
@@ -35,7 +35,7 @@ spec:
   tags:
     sdk: mcp-go
     team: platform
-  hint: "Extended utilities: greeting, time management, authentication testing, and chocolate molding"
+  hint: "Extended utilities:, time, authentication testing, and chocolate molding"
 ---
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPServerRegistration
@@ -50,8 +50,8 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: mcp-server3-route
-  category: dining
+  category: restaurant booking
   tags:
     sdk: fastmcp
     team: platform
-  hint: "Dining and travel: restaurant search, table reservations, city guides, weather, and math utilities"
+  hint: "Dining and travel: restaurant availability and reservations for a city"

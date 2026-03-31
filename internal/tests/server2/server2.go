@@ -30,7 +30,7 @@ var (
 	testTools = map[string]server.ServerTool{
 		"hello_world": {
 			Tool: mcp.NewTool("hello_world",
-				mcp.WithDescription("Say hello to someone"),
+				mcp.WithDescription("Greet a person by name and return a hello message"),
 				mcp.WithString("name",
 					mcp.Required(),
 					mcp.Description("Name of the person to greet"),
@@ -45,7 +45,7 @@ var (
 		},
 		"time": {
 			Tool: mcp.NewTool("time",
-				mcp.WithDescription("Get the current time"),
+				mcp.WithDescription("Return the current date and time"),
 				mcp.WithTitleAnnotation("Clock"),
 				mcp.WithReadOnlyHintAnnotation(true),
 				mcp.WithDestructiveHintAnnotation(false),
@@ -56,7 +56,7 @@ var (
 		},
 		"headers": {
 			Tool: mcp.NewTool("headers",
-				mcp.WithDescription("get HTTP headers"),
+				mcp.WithDescription("Return the HTTP request headers received by the server"),
 				mcp.WithTitleAnnotation("header inspector"),
 				mcp.WithReadOnlyHintAnnotation(true),
 				mcp.WithDestructiveHintAnnotation(false),
@@ -67,7 +67,7 @@ var (
 		},
 		"auth1234": {
 			Tool: mcp.NewTool("auth1234",
-				mcp.WithDescription("check authorization header"),
+				mcp.WithDescription("Validate that the request contains a valid Bearer 1234 authorization token"),
 				mcp.WithTitleAnnotation("auth header verifier"),
 				mcp.WithReadOnlyHintAnnotation(true),
 				mcp.WithDestructiveHintAnnotation(false),
@@ -78,7 +78,7 @@ var (
 		},
 		"slow": {
 			Tool: mcp.NewTool("slow",
-				mcp.WithDescription("Delay for N seconds"),
+				mcp.WithDescription("Wait for a specified number of seconds with progress notifications"),
 				mcp.WithTitleAnnotation("delay tool"),
 				mcp.WithReadOnlyHintAnnotation(true),
 				mcp.WithDestructiveHintAnnotation(false),
@@ -92,7 +92,7 @@ var (
 		},
 		"set_time": {
 			Tool: mcp.NewTool("set_time",
-				mcp.WithDescription("Set the clock"),
+				mcp.WithDescription("Attempt to set the system clock to a new time (not implemented)"),
 				mcp.WithTitleAnnotation("set time tool"),
 				mcp.WithReadOnlyHintAnnotation(false),
 				mcp.WithDestructiveHintAnnotation(true),
