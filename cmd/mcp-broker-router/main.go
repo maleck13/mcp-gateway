@@ -55,23 +55,23 @@ func init() {
 }
 
 var (
-	mcpRouterAddrFlag         string
-	mcpBrokerAddrFlag         string
-	mcpRoutePublicHost        string
-	mcpRoutePrivateHost       string
-	mcpRouterKey              string
-	cacheConnectionStringFlag string
-	mcpConfigFile             string
-	jwtSigningKeyFlag         string
-	sessionDurationInMins     int64
-	brokerWriteTimeoutSecs    int64
-	managerTickerIntervalSecs int64
-	loglevel                  int
-	logFormat                 string
+	mcpRouterAddrFlag              string
+	mcpBrokerAddrFlag              string
+	mcpRoutePublicHost             string
+	mcpRoutePrivateHost            string
+	mcpRouterKey                   string
+	cacheConnectionStringFlag      string
+	mcpConfigFile                  string
+	jwtSigningKeyFlag              string
+	sessionDurationInMins          int64
+	brokerWriteTimeoutSecs         int64
+	managerTickerIntervalSecs      int64
+	loglevel                       int
+	logFormat                      string
 	enforceCapabilityFilteringFlag bool
-	invalidToolPolicyFlag     string
-	maxRequestBodySize        int
-	enableURLElicitationFlag  bool
+	invalidToolPolicyFlag          string
+	maxRequestBodySize             int
+	enableURLElicitationFlag       bool
 )
 
 func main() {
@@ -216,6 +216,14 @@ func main() {
 	if managerTickerInterval <= 0 {
 		panic("flag mcp-check-interval cannot be 0 or less seconds")
 	}
+	userTokenCache, err := mcpRouter.NewUserTokenCache(
+		mcpRouter.WithUserTokenRedisClient(redisClient),
+		mcpRouter.WithUserTokenSigningKey(jwtSigningKeyFlag),
+	)
+	if err != nil {
+		panic("failed to setup user token cache: " + err.Error())
+	}
+
 	mcpBroker := broker.NewBroker(logger.With("component", "broker"),
 		broker.WithEnforceCapabilityFilter(enforceCapabilityFilteringFlag),
 		broker.WithTrustedHeadersPublicKey(os.Getenv("TRUSTED_HEADER_PUBLIC_KEY")),
@@ -224,7 +232,7 @@ func main() {
 		broker.WithElicitationEnabled(enableURLElicitationFlag),
 	)
 	brokerServer, mcpServer := setUpHTTPServer(mcpBrokerAddrFlag, mcpBroker, jwtSessionMgr, brokerWriteTimeoutSecs)
-	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap)
+	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap, userTokenCache)
 	mcpConfig.RegisterObserver(router)
 	mcpConfig.RegisterObserver(mcpBroker)
 	if mcpRoutePublicHost == "" {
@@ -361,7 +369,7 @@ func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager 
 	return httpSrv, streamableHTTPServer
 }
 
-func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map) (*grpc.Server, *mcpRouter.ExtProcServer) {
+func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map, userTokenCache mcpRouter.UserTokenCache) (*grpc.Server, *mcpRouter.ExtProcServer) {
 
 	grpcSrv := grpc.NewServer()
 	server := &mcpRouter.ExtProcServer{
@@ -374,6 +382,7 @@ func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *sessi
 		Broker:             broker, // TODO we shouldn't need a handle to broker in the router
 		MaxRequestBodySize: maxRequestBodySize,
 		ElicitationEnabled: enableURLElicitationFlag,
+		UserTokenCache:     userTokenCache,
 	}
 
 	extProcV3.RegisterExternalProcessorServer(grpcSrv, server)

@@ -43,6 +43,7 @@ type ExtProcServer struct {
 	ElicitationMap     idmap.Map
 	MaxRequestBodySize int
 	ElicitationEnabled bool
+	UserTokenCache     UserTokenCache
 	//TODO this should not be needed
 	Broker broker.MCPBroker
 }
