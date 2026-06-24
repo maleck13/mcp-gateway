@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	. "github.com/onsi/gomega"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 // ScaleDeployment scales a deployment to the specified replicas
@@ -154,6 +156,22 @@ func AddGatewayHTTPSListener(ctx context.Context, namespace, gatewayName, listen
 		return fmt.Errorf("failed to add HTTPS listener to gateway %s: %s: %w", gatewayName, string(output), err)
 	}
 	return nil
+}
+
+// removeGatewayListener removes a listener by name from a gateway, if it exists.
+func removeGatewayListener(ctx context.Context, k8sClient client.Client, namespace, gatewayName, listenerName string) {
+	gw := &gatewayapiv1.Gateway{}
+	if err := k8sClient.Get(ctx, client.ObjectKey{Name: gatewayName, Namespace: namespace}, gw); err != nil {
+		return
+	}
+	var listeners []gatewayapiv1.Listener
+	for _, l := range gw.Spec.Listeners {
+		if string(l.Name) != listenerName {
+			listeners = append(listeners, l)
+		}
+	}
+	gw.Spec.Listeners = listeners
+	_ = k8sClient.Update(ctx, gw)
 }
 
 // PatchDeploymentJSON applies a JSON patch (RFC 6902) to a deployment.

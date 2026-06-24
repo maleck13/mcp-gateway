@@ -491,7 +491,8 @@ generate-e2e-config: ## Generate e2e gateway configs from templates (E2E_DOMAIN=
 	@export E2E_DOMAIN=$(E2E_DOMAIN) GATEWAY_CLASS_NAME=$(GATEWAY_CLASS_NAME) && \
 	  envsubst < config/e2e/gateway-1.yaml.template > config/e2e/gateway-1.yaml && \
 	  envsubst < config/e2e/gateway-2.yaml.template > config/e2e/gateway-2.yaml && \
-	  envsubst < config/e2e/gateway-shared.yaml.template > config/e2e/gateway-shared.yaml
+	  envsubst < config/e2e/gateway-shared.yaml.template > config/e2e/gateway-shared.yaml && \
+	  envsubst < config/e2e/gateway-elicitation.yaml.template > config/e2e/gateway-elicitation.yaml
 	@cp config/e2e/kustomization-$(E2E_PLATFORM).yaml config/e2e/kustomization.yaml
 	@echo "E2E config generated successfully"
 
@@ -506,7 +507,9 @@ deploy-e2e-gateways: generate-e2e-config ## Deploy two gateways for e2e multi-ga
 	@kubectl wait --for=condition=Programmed gateway/e2e-2 -n gateway-system --timeout=$(WAIT_TIME)
 	@echo "Waiting for shared gateway to be programmed..."
 	@kubectl wait --for=condition=Programmed gateway/shared-gateway -n gateway-system --timeout=$(WAIT_TIME)
-	@echo "E2E gateways ready: e2e-1, e2e-2, and shared-gateway"
+	@echo "Waiting for elicitation gateway to be programmed..."
+	@kubectl wait --for=condition=Programmed gateway/e2e-elicitation -n gateway-system --timeout=$(WAIT_TIME)
+	@echo "E2E gateways ready: e2e-1, e2e-2, shared-gateway, and e2e-elicitation"
 
 # Deploy e2e gateways for OpenShift
 .PHONY: deploy-e2e-gateways-openshift
