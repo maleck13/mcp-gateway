@@ -15,4 +15,5 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /mcp-test-server
 
 FROM alpine:latest
 COPY --from=builder /mcp-test-server /mcp-test-server
+ENV PORT=9090
 CMD ["/mcp-test-server"]

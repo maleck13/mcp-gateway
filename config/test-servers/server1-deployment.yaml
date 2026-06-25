@@ -19,13 +19,12 @@ spec:
         image: ghcr.io/kuadrant/mcp-gateway/test-server1:latest
         imagePullPolicy: Never
         command: ["/mcp-test-server"]
-        args: ["--http", "0.0.0.0:9090"]
         ports:
         - containerPort: 9090
           name: http
         env:
-        - name: LOG_LEVEL
-          value: "info"
+        - name: PORT
+          value: "9090"
         resources:
           limits:
             memory: "128Mi"

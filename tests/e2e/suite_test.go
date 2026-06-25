@@ -73,12 +73,12 @@ func TestE2E(t *testing.T) {
 	RunSpecs(t, "MCP Gateway E2E Suite")
 }
 
-var _ = BeforeSuite(func() {
+// setupK8sClient initializes the shared k8s client and scheme for this process.
+func setupK8sClient() {
 	logf.SetLogger(logr.FromSlogHandler(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
 	ctx, cancel = context.WithCancel(context.Background())
 
-	By("Setting up test scheme")
 	testScheme = runtime.NewScheme()
 	Expect(scheme.AddToScheme(testScheme)).To(Succeed())
 	Expect(mcpv1alpha1.AddToScheme(testScheme)).To(Succeed())
@@ -86,7 +86,6 @@ var _ = BeforeSuite(func() {
 	Expect(gatewayv1beta1.Install(testScheme)).To(Succeed())
 	Expect(istionetv1beta1.AddToScheme(testScheme)).To(Succeed())
 
-	By("Getting kubeconfig")
 	var err error
 	kubeconfig := os.Getenv("KUBECONFIG")
 	if kubeconfig == "" {
@@ -97,17 +96,21 @@ var _ = BeforeSuite(func() {
 	cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	Expect(err).ToNot(HaveOccurred())
 
-	By("Creating Kubernetes client")
 	k8sClient, err = client.New(cfg, client.Options{Scheme: testScheme})
 	Expect(err).ToNot(HaveOccurred())
 
-	By("Verifying cluster connection")
 	namespaceList := &corev1.NamespaceList{}
 	Expect(k8sClient.List(ctx, namespaceList)).To(Succeed())
+}
+
+// SynchronizedBeforeSuite: first function runs on process 1 only (cluster
+// mutation), second function runs on every process (local client setup).
+var _ = SynchronizedBeforeSuite(func() {
+	setupK8sClient()
 
 	By("Checking test namespace exists")
 	testNs := &corev1.Namespace{}
-	err = k8sClient.Get(ctx, client.ObjectKey{Name: TestServerNameSpace}, testNs)
+	err := k8sClient.Get(ctx, client.ObjectKey{Name: TestServerNameSpace}, testNs)
 	if err != nil {
 		GinkgoWriter.Printf("Warning: test namespace %s does not exist, tests may fail\n", TestServerNameSpace)
 	}
@@ -118,7 +121,6 @@ var _ = BeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred(), fmt.Sprintf("System namespace %s must exist", SystemNamespace))
 
 	By("cleaning up all existing mcpserverregistrations")
-
 	err = k8sClient.DeleteAllOf(ctx, &mcpv1alpha1.MCPServerRegistration{}, client.InNamespace(TestServerNameSpace), &client.DeleteAllOfOptions{ListOptions: client.ListOptions{
 		LabelSelector: labels.Everything(),
 	}})
@@ -139,6 +141,9 @@ var _ = BeforeSuite(func() {
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(extList.Items).To(BeEmpty())
 	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+	By("removing stale HTTPS listener if present from a prior run")
+	removeGatewayListener(ctx, k8sClient, GatewayNamespace, GatewayName, GatewayListenerName)
 
 	By("adding HTTPS listener to the gateway")
 	Expect(AddGatewayHTTPSListener(ctx, GatewayNamespace, GatewayName,
@@ -164,9 +169,6 @@ var _ = BeforeSuite(func() {
 		g.Expect(err).NotTo(HaveOccurred())
 	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
-	// debug logging on the gateway comes from the controller's
-	// BROKER_ROUTER_LOG_LEVEL env var (set in the CI overlay), so no
-	// post-deploy patch and rollout is needed here
 	By("waiting for broker/router deployment to be ready")
 	Eventually(func(g Gomega) {
 		deployment := &appsv1.Deployment{}
@@ -199,10 +201,20 @@ var _ = BeforeSuite(func() {
 		`]`
 	Expect(PatchDeploymentJSON(ctx, SystemNamespace, "mcp-gateway", combinedPatch)).To(Succeed())
 	Expect(WaitForDeploymentReady(ctx, SystemNamespace, "mcp-gateway")).To(Succeed())
-
+}, func() {
+	// runs on every process: set up local k8s client
+	setupK8sClient()
 })
 
-var _ = AfterSuite(func() {
+// SynchronizedAfterSuite: first function runs on every process (local
+// cleanup), second function runs on process 1 only (cluster teardown).
+var _ = SynchronizedAfterSuite(func() {
+	if cancel != nil {
+		cancel()
+	}
+}, func() {
+	setupK8sClient()
+
 	By("Tearing down the test environment")
 
 	By("cleaning up gateway CA bundle and deployment patches")
@@ -215,23 +227,9 @@ var _ = AfterSuite(func() {
 	_ = RemoveDeploymentVolume(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
 
 	By("removing HTTPS listener from gateway")
-	gw := &gatewayapiv1.Gateway{}
-	if err := k8sClient.Get(ctx, client.ObjectKey{Name: GatewayName, Namespace: GatewayNamespace}, gw); err == nil {
-		var listeners []gatewayapiv1.Listener
-		for _, l := range gw.Spec.Listeners {
-			if string(l.Name) != GatewayListenerName {
-				listeners = append(listeners, l)
-			}
-		}
-		gw.Spec.Listeners = listeners
-		_ = k8sClient.Update(ctx, gw)
-	}
+	removeGatewayListener(ctx, k8sClient, GatewayNamespace, GatewayName, GatewayListenerName)
 
 	if defaultMCPGatewayExt != nil {
 		defaultMCPGatewayExt.TearDown(ctx)
-	}
-
-	if cancel != nil {
-		cancel()
 	}
 })

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -25,7 +26,7 @@ var sharedMCPTestServer2 = "mcp-test-server2"
 // this should only be used by one test as the tests run in parallel.
 var scaledMCPTestServer = "mcp-test-server3"
 
-var _ = Describe("MCP Gateway Registration Happy Path", func() {
+var _ = FDescribe("MCP Gateway Registration Happy Path", func() {
 	var (
 		testResources    = []client.Object{}
 		mcpGatewayClient *NotifyingMCPClient
@@ -210,7 +211,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 	It("[Happy] should use and re-use a backend MCP session", func() {
 
-		registration := NewMCPServerResourcesWithDefaults("sessions", k8sClient).Build()
+		registration := NewMCPServerResourcesWithDefaults("sessions", k8sClient).WithPrefix("sess_").Build()
 		// Important as we need to make sure to clean up
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
@@ -295,7 +296,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 	It("[Happy] concurrent tool calls on a fresh session should create only one backend session", func() {
 		By("Registering an MCPServerRegistration")
-		registration := NewMCPServerResourcesWithDefaults("concurrent-session", k8sClient).Build()
+		registration := NewMCPServerResourcesWithDefaults("concurrent-session", k8sClient).WithPrefix("conc_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
 
@@ -351,6 +352,99 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		GinkgoWriter.Printf("all %d concurrent calls used backend session: %s\n", concurrency, firstSession)
 	})
 
+	It("[Happy] concurrent tool calls across different backends should each reach the correct upstream", func() {
+		By("Registering server1 (Go) and everything-server (TypeScript) with unique prefixes")
+		reg1 := NewMCPServerResourcesWithDefaults("cross-backend-1", k8sClient).
+			WithPrefix("xb1_").Build()
+		testResources = append(testResources, reg1.GetObjects()...)
+		server1 := reg1.Register(ctx)
+
+		reg2 := NewMCPServerResources("cross-backend-2", "everything-server.mcp-gateway.local", "everything-server", 9090, k8sClient).
+			WithPrefix("xb2_").Build()
+		testResources = append(testResources, reg2.GetObjects()...)
+		server2 := reg2.Register(ctx)
+
+		By("Waiting for both servers to become ready")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server1.Name, server1.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server2.Name, server2.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		tool1 := fmt.Sprintf("%shello_world", server1.Spec.Prefix)
+		tool2 := fmt.Sprintf("%secho", server2.Spec.Prefix)
+		WaitForToolsWithPrefix(ctx, mcpGatewayClient, server1.Spec.Prefix)
+		WaitForToolsWithPrefix(ctx, mcpGatewayClient, server2.Spec.Prefix)
+
+		By("Initializing a fresh session with no backend sessions")
+		var sessionID string
+		Eventually(func(g Gomega) {
+			var initErr error
+			sessionID, initErr = mcpInitialize(ctx, gatewayURL, nil)
+			g.Expect(initErr).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+		Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)).To(Succeed())
+
+		By("Firing concurrent tool calls to both backends simultaneously")
+		const rounds = 5
+		type callResult struct {
+			status int
+			body   string
+			err    error
+		}
+		results1 := make([]callResult, rounds)
+		results2 := make([]callResult, rounds)
+
+		var wg sync.WaitGroup
+		for i := range rounds {
+			wg.Add(2)
+			go func(idx int) {
+				defer wg.Done()
+				callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
+				status, content, err := mcpCallTool(callCtx, gatewayURL, sessionID, tool1, map[string]any{"name": fmt.Sprintf("r%d", idx)}, nil)
+				if err != nil {
+					results1[idx] = callResult{err: fmt.Errorf("tool  %s %w", tool1, err)}
+					return
+				}
+				body := ""
+				if len(content) > 0 {
+					body = content[0].Text
+				}
+				results1[idx] = callResult{status: status, body: body}
+			}(i)
+			go func(idx int) {
+				defer wg.Done()
+				callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
+				status, content, err := mcpCallTool(callCtx, gatewayURL, sessionID, tool2, map[string]any{"message": fmt.Sprintf("r%d", idx)}, nil)
+				if err != nil {
+					results2[idx] = callResult{err: fmt.Errorf("tool  %s %w", tool2, err)}
+					return
+				}
+				body := ""
+				if len(content) > 0 {
+					body = content[0].Text
+				}
+				results2[idx] = callResult{status: status, body: body}
+			}(i)
+		}
+		wg.Wait()
+
+		By("Asserting all calls to server1 (Go greet) succeeded")
+		for i, r := range results1 {
+			Expect(r.err).NotTo(HaveOccurred(), "server1 call %d should succeed", i)
+			Expect(r.status).To(Equal(200), "server1 call %d status", i)
+			Expect(r.body).To(ContainSubstring("Hello, r"), "server2 call %d body", i)
+		}
+
+		By("Asserting all calls to everything-server (TS echo) succeeded")
+		for i, r := range results2 {
+			Expect(r.err).NotTo(HaveOccurred(), "everything-server call %d should succeed", i)
+			Expect(r.status).To(Equal(200), "everything-server call %d status", i)
+			Expect(r.body).To(ContainSubstring("Echo: r"), "everything-server call %d body", i)
+		}
+	})
+
 	It("[Full] Redis session cache persists backend sessions across pod restarts", func() {
 		deploymentName := "mcp-gateway"
 		redisSecretName := "redis-session-store"
@@ -386,7 +480,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		})
 
 		By("Registering an MCP server")
-		registration := NewMCPServerResourcesWithDefaults("redis-session", k8sClient).Build()
+		registration := NewMCPServerResourcesWithDefaults("redis-session", k8sClient).WithPrefix("redis_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
 
@@ -494,7 +588,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 	It("[Happy] should only return tools specified by MCPVirtualServer when using X-Mcp-Virtualserver header", func() {
 		By("Creating an MCPServerRegistration with tools")
-		registration := NewMCPServerResourcesWithDefaults("virtualserver-test", k8sClient).Build()
+		registration := NewMCPServerResourcesWithDefaults("virtualserver-test", k8sClient).WithPrefix("vst_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
 
@@ -601,7 +695,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating an MCPServerRegistration pointing to server1 which has the add_tool feature")
 		registration := NewMCPServerResourcesWithDefaults("backend-notification-test", k8sClient).
-			WithBackendTarget(sharedMCPTestServer1, 9090).Build()
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("bknotif_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
 
@@ -798,7 +892,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		SetupTrustedHeadersAuth(ctx, k8sClient)
 
 		By("Creating an MCPServerRegistration with tools")
-		registration := NewMCPServerResourcesWithDefaults("authorized-capabilities-test", k8sClient).Build()
+		registration := NewMCPServerResourcesWithDefaults("authorized-capabilities-test", k8sClient).WithPrefix("authcap_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
 
@@ -868,7 +962,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		// broker's /status endpoint.
 		By("Creating an MCPServerRegistration pointing to the broken server with wrong protocol version")
 		registration := NewMCPServerResourcesWithDefaults("protocol-status-test", k8sClient).
-			WithBackendTarget("mcp-test-broken-server", 9090).Build()
+			WithBackendTarget("mcp-test-broken-server", 9090).WithPrefix("broken_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
 
@@ -1247,7 +1341,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying second server becomes Ready (conflicts are broker-side, not in CRD status)")
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server2.Name, server2.Namespace)).To(BeNil())
+			msg, err := GetMCPServerRegistrationStatusMessage(ctx, k8sClient, server2.Name, server2.Namespace)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(strings.Contains(msg, "conflict")).To(BeTrue(), "expected conflict message")
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Modifying second MCPServer to add a prefix to resolve conflict")

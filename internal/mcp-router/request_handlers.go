@@ -769,7 +769,7 @@ func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *
 		if err != nil {
 			s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
 			mcpotel.SpanError(initSpan, err, "failed to initialize backend session")
-			return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
+			return "", NewRouterErrorf(500, "failed to create session for mcp server %s : %w", mcpReq.serverName, err)
 		}
 		var sessionCloser = func() {
 			// use a fresh context: the request-scoped ctx is canceled long before this fires

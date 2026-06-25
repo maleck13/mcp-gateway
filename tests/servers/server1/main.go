@@ -1,291 +1,224 @@
-// Based on https://github.com/modelcontextprotocol/go-sdk/blob/5bd02a3c0451110e8e01a56b9fcfeb048c560a92/examples/server/hello/main.go
-
 // A simple MCP server that implements a few tools
-// - The "hi" tool from the library sample
-// - A "time" tool that returns the current time
-// - A "slow" tool that waits N seconds, notifying the client of progress
-// - A "headers" tool that returns all HTTP headers it received
+// - greet: say hi to someone
+// - time: get the current time
+// - slow: delay N seconds with progress notifications
+// - headers: return all HTTP headers received
+// - add_tool: dynamically add a new tool (triggers notifications/tools/list_changed)
+// Plus a "greet" prompt and an embedded "info" resource.
 package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
-
-type contextKey string
-
-const (
-	// HeadersKey is used to save HTTP headers in request context, for the "headers" tool
-	HeadersKey contextKey = "http-headers"
-)
-
-var httpAddr = flag.String(
-	"http",
-	"",
-	"if set, use streamable HTTP at this address, instead of stdin/stdout",
-)
-
-type hiArgs struct {
-	Name string `json:"name" jsonschema:"the name to say hi to"`
-}
-
-func sayHi(
-	_ context.Context,
-	_ *mcp.CallToolRequest,
-	params hiArgs,
-) (*mcp.CallToolResult, any, error) {
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: "Hi " + params.Name},
-		},
-	}, nil, nil
-}
-
-// A simple tool that returns the current time
-func timeTool(
-	_ context.Context,
-	_ *mcp.CallToolRequest,
-	_ struct{},
-) (*mcp.CallToolResult, any, error) {
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: time.Now().String()},
-		},
-	}, nil, nil
-}
-
-// A simple tool that returns all HTTP headers it received
-func headersTool(
-	ctx context.Context,
-	_ *mcp.CallToolRequest,
-	_ struct{},
-) (*mcp.CallToolResult, any, error) {
-	content := make([]mcp.Content, 0)
-	headers, ok := ctx.Value(HeadersKey).(http.Header)
-	if ok {
-		for k, v := range headers {
-			content = append(content, &mcp.TextContent{Text: fmt.Sprintf("%s: %v", k, v)})
-		}
-	}
-
-	return &mcp.CallToolResult{
-		Content: content,
-	}, nil, nil
-}
-
-type slowArgs struct {
-	Seconds int `json:"seconds" jsonschema:"number of seconds to wait"`
-}
-
-type addToolArgs struct {
-	Name        string `json:"name" jsonschema:"the name of the new tool to add"`
-	Description string `json:"description" jsonschema:"the description of the new tool"`
-}
-
-type dynamicToolManager struct {
-	server *mcp.Server
-}
-
-// addTool dynamically adds a new tool to the server and triggers notifications/tools/list_changed
-func (m *dynamicToolManager) addTool(
-	_ context.Context,
-	_ *mcp.CallToolRequest,
-	params addToolArgs,
-) (*mcp.CallToolResult, any, error) {
-	name := params.Name
-	desc := params.Description
-	if desc == "" {
-		desc = "dynamically added tool"
-	}
-
-	mcp.AddTool(m.server, &mcp.Tool{Name: name, Description: desc}, func(
-		_ context.Context,
-		_ *mcp.CallToolRequest,
-		_ struct{},
-	) (*mcp.CallToolResult, any, error) {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: "I am the dynamically added tool: " + name},
-			},
-		}, nil, nil
-	})
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: fmt.Sprintf("Added new tool: %s", name)},
-		},
-	}, nil, nil
-}
-
-// A long-running tool that waits N seconds, notifying the client of progress
-func slowTool(
-	ctx context.Context,
-	req *mcp.CallToolRequest,
-	params slowArgs,
-) (*mcp.CallToolResult, any, error) {
-	startTime := time.Now()
-	fmt.Printf("Slow tool will wait for %d seconds\n", params.Seconds)
-	for {
-		waited := int(time.Since(startTime).Seconds())
-		if waited >= params.Seconds {
-			break
-		}
-
-		var progressToken string
-		if req != nil && req.Params != nil && req.Params.Meta != nil {
-			rawProgressToken := req.Params.Meta["progressToken"]
-			switch v := rawProgressToken.(type) {
-			case string:
-				progressToken = v
-			case float64:
-				progressToken = fmt.Sprintf("%d", int(v))
-			default:
-				fmt.Printf("Unexpected type for progressToken: %T\n", v)
-			}
-		}
-
-		if progressToken != "" && req != nil && req.Session != nil {
-			fmt.Printf("Notify client that we have waited %d seconds\n", waited)
-			err := req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
-				Message:       fmt.Sprintf("Waited %d seconds...", waited),
-				ProgressToken: progressToken,
-				Progress:      float64(waited),
-			})
-			if err != nil {
-				fmt.Printf("NotifyProgress error: %v\n", err)
-			}
-		}
-
-		time.Sleep(1 * time.Second)
-	}
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{},
-	}, nil, nil
-}
-
-func promptHi(
-	_ context.Context,
-	req *mcp.GetPromptRequest,
-) (*mcp.GetPromptResult, error) {
-	return &mcp.GetPromptResult{
-		Description: "Code review prompt",
-		Messages: []*mcp.PromptMessage{
-			{
-				Role:    "user",
-				Content: &mcp.TextContent{Text: "Say hi to " + req.Params.Arguments["name"]},
-			},
-		},
-	}, nil
-}
 
 func main() {
-	flag.Parse()
-
-	server := mcp.NewServer(&mcp.Implementation{Name: "test mcp server 1"}, nil)
-	mcp.AddTool(server, &mcp.Tool{Name: "greet", Description: "say hi"}, sayHi)
-	mcp.AddTool(server, &mcp.Tool{Name: "time", Description: "get current time", Annotations: &mcp.ToolAnnotations{Title: "time"}}, timeTool)
-	mcp.AddTool(server, &mcp.Tool{Name: "slow", Description: "delay N seconds"}, slowTool)
-	mcp.AddTool(server, &mcp.Tool{Name: "headers", Description: "get headers"}, headersTool)
-
-	toolManager := &dynamicToolManager{server: server}
-	mcp.AddTool(server, &mcp.Tool{Name: "add_tool", Description: "dynamically add a new tool (triggers notifications/tools/list_changed)", Annotations: &mcp.ToolAnnotations{Title: "add"}}, toolManager.addTool)
-
-	server.AddPrompt(&mcp.Prompt{Name: "greet"}, promptHi)
-
-	server.AddResource(&mcp.Resource{
-		Name:     "info",
-		MIMEType: "text/plain",
-		URI:      "embedded:info",
-	}, handleEmbeddedResource)
-
-	if *httpAddr != "" {
-		server.AddReceivingMiddleware(rpcPrintMiddleware)
-		handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
-			return server
-		}, nil)
-
-		// Create a new HTTP handler that records headers
-		handler2 := mcpRecordHeaders{
-			Handler: handler,
-		}
-
-		log.Printf("MCP handler will listen at %s", *httpAddr)
-		server := &http.Server{
-			Addr:              *httpAddr,
-			Handler:           handler2,
-			ReadHeaderTimeout: 3 * time.Second,
-		}
-		_ = server.ListenAndServe()
-	} else {
-		log.Printf("MCP handler use stdio")
-		if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-			log.Printf("Server failed: %v", err)
-		}
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "9090"
 	}
-}
 
-type mcpRecordHeaders struct {
-	Handler http.Handler
-}
+	hooks := &server.Hooks{}
+	hooks.AddOnRegisterSession(func(_ context.Context, session server.ClientSession) {
+		log.Printf("Client %s connected", session.SessionID())
+	})
+	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
+		log.Printf("Client %s disconnected", session.SessionID())
+	})
+	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
+		log.Printf("Processing %s request", method)
+	})
 
-// ServeHTTP implements http.Handler.
-func (m mcpRecordHeaders) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	// Save the headers in the request context
-	newReq := req.WithContext(context.WithValue(req.Context(),
-		HeadersKey, req.Header))
-	m.Handler.ServeHTTP(rw, newReq)
-}
+	s := server.NewMCPServer(
+		"test mcp server 1",
+		"1.0.0",
+		server.WithHooks(hooks),
+		server.WithToolCapabilities(true),
+		server.WithPromptCapabilities(true),
+		server.WithResourceCapabilities(true, false),
+	)
 
-// Simple middleware that just prints the method and parameters
-func rpcPrintMiddleware(
-	next mcp.MethodHandler,
-) mcp.MethodHandler {
-	return func(
-		ctx context.Context,
-		method string,
-		req mcp.Request,
-	) (mcp.Result, error) {
-		fmt.Printf("MCP method started: method=%s, params=%v\n",
-			method,
-			req,
-		)
-
-		result, err := next(ctx, method, req)
-		return result, err
-	}
-}
-
-var embeddedResources = map[string]string{
-	"info": "This is the hello example server.",
-}
-
-func handleEmbeddedResource(
-	_ context.Context,
-	req *mcp.ReadResourceRequest,
-) (*mcp.ReadResourceResult, error) {
-	u, err := url.Parse(req.Params.URI)
-	if err != nil {
-		return nil, err
-	}
-	if u.Scheme != "embedded" {
-		return nil, fmt.Errorf("wrong scheme: %q", u.Scheme)
-	}
-	key := u.Opaque
-	text, ok := embeddedResources[key]
-	if !ok {
-		return nil, fmt.Errorf("no embedded resource named %q", key)
-	}
-	return &mcp.ReadResourceResult{
-		Contents: []*mcp.ResourceContents{
-			{URI: req.Params.URI, MIMEType: "text/plain", Text: text},
+	s.AddTools(
+		server.ServerTool{
+			Tool: mcp.NewTool("greet",
+				mcp.WithDescription("say hi"),
+				mcp.WithString("name", mcp.Required(), mcp.Description("the name to say hi to")),
+			),
+			Handler: greetHandler,
 		},
-	}, nil
+		server.ServerTool{
+			Tool: mcp.NewTool("time",
+				mcp.WithDescription("get current time"),
+				mcp.WithTitleAnnotation("time"),
+			),
+			Handler: timeHandler,
+		},
+		server.ServerTool{
+			Tool: mcp.NewTool("slow",
+				mcp.WithDescription("delay N seconds"),
+				mcp.WithNumber("seconds", mcp.Required(), mcp.Description("number of seconds to wait")),
+			),
+			Handler: slowHandler,
+		},
+		server.ServerTool{
+			Tool: mcp.NewTool("headers",
+				mcp.WithDescription("get headers"),
+			),
+			Handler: headersHandler,
+		},
+		server.ServerTool{
+			Tool: mcp.NewTool("add_tool",
+				mcp.WithDescription("dynamically add a new tool (triggers notifications/tools/list_changed)"),
+				mcp.WithTitleAnnotation("add"),
+				mcp.WithString("name", mcp.Required(), mcp.Description("the name of the new tool to add")),
+				mcp.WithString("description", mcp.Description("the description of the new tool")),
+			),
+			Handler: addToolHandler(s),
+		},
+	)
+
+	s.AddPrompts(server.ServerPrompt{
+		Prompt: mcp.Prompt{Name: "greet"},
+		Handler: func(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			name := req.Params.Arguments["name"]
+			return &mcp.GetPromptResult{
+				Description: "Code review prompt",
+				Messages: []mcp.PromptMessage{
+					{
+						Role:    mcp.RoleUser,
+						Content: mcp.NewTextContent("Say hi to " + name),
+					},
+				},
+			}, nil
+		},
+	})
+
+	s.AddResources(server.ServerResource{
+		Resource: mcp.Resource{
+			Name:     "info",
+			MIMEType: "text/plain",
+			URI:      "embedded:info",
+		},
+		Handler: func(_ context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			return []mcp.ResourceContents{
+				mcp.TextResourceContents{
+					URI:      req.Params.URI,
+					MIMEType: "text/plain",
+					Text:     "This is the hello example server.",
+				},
+			}, nil
+		},
+	})
+
+	mux := http.NewServeMux()
+	httpServer := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 3 * time.Second,
+	}
+
+	streamableHTTPServer := server.NewStreamableHTTPServer(
+		s,
+		server.WithStreamableHTTPServer(httpServer),
+	)
+	mux.Handle("/mcp", streamableHTTPServer)
+
+	go func() {
+		fmt.Printf("Serving HTTPStreamable on http://localhost:%s/mcp\n", port)
+		if err := streamableHTTPServer.Start(":" + port); err != nil {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	<-c
+	log.Println("Shutting down server...")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := streamableHTTPServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown error: %v", err)
+	}
+}
+
+func greetHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	name, err := req.RequireString("name")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText("Hi " + name), nil
+}
+
+func timeHandler(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return mcp.NewToolResultText(time.Now().String()), nil
+}
+
+func headersHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	content := make([]mcp.Content, 0)
+	for k, v := range req.Header {
+		content = append(content, mcp.TextContent{
+			Type: "text",
+			Text: fmt.Sprintf("%s: %v", k, v),
+		})
+	}
+	return &mcp.CallToolResult{Content: content}, nil
+}
+
+func slowHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	seconds, err := req.RequireInt("seconds")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	var progressToken mcp.ProgressToken
+	if req.Params.Meta != nil {
+		progressToken = req.Params.Meta.ProgressToken
+	}
+	srv := server.ServerFromContext(ctx)
+
+	startTime := time.Now()
+	for {
+		waited := int(time.Since(startTime).Seconds())
+		if waited >= seconds {
+			break
+		}
+		if progressToken != nil && srv != nil {
+			msg := fmt.Sprintf("Waited %d seconds...", waited)
+			_ = srv.SendNotificationToClient(ctx, "notifications/progress", map[string]any{
+				"progress":      waited,
+				"progressToken": progressToken,
+				"message":       msg,
+			})
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return mcp.NewToolResultText("done"), nil
+}
+
+func addToolHandler(s *server.MCPServer) server.ToolHandlerFunc {
+	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		name, err := req.RequireString("name")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		desc := req.GetString("description", "dynamically added tool")
+
+		s.AddTools(server.ServerTool{
+			Tool: mcp.NewTool(name, mcp.WithDescription(desc)),
+			Handler: func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return mcp.NewToolResultText("I am the dynamically added tool: " + name), nil
+			},
+		})
+
+		return mcp.NewToolResultText(fmt.Sprintf("Added new tool: %s", name)), nil
+	}
 }
