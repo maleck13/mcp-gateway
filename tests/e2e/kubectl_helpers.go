@@ -10,8 +10,6 @@ import (
 	"strings"
 
 	. "github.com/onsi/gomega"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 // ScaleDeployment scales a deployment to the specified replicas
@@ -140,38 +138,6 @@ func RemoveDeploymentCommandFlag(ctx context.Context, namespace, deploymentName,
 		return fmt.Errorf("failed to remove command flag on deployment %s: %s: %w", deploymentName, string(output), err)
 	}
 	return nil
-}
-
-// AddGatewayHTTPSListener patches a Gateway to add an HTTPS listener with TLS termination.
-func AddGatewayHTTPSListener(ctx context.Context, namespace, gatewayName, listenerName, hostname, certSecretName string, port int) error {
-	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/listeners/-","value":{`+
-		`"name":"%s","hostname":"%s","port":%d,"protocol":"HTTPS",`+
-		`"tls":{"mode":"Terminate","certificateRefs":[{"kind":"Secret","name":"%s"}]},`+
-		`"allowedRoutes":{"namespaces":{"from":"All"}}}}]`,
-		listenerName, hostname, port, certSecretName)
-	cmd := exec.CommandContext(ctx, "kubectl", "patch", "gateway", gatewayName,
-		"-n", namespace, "--type=json", "-p", patch)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to add HTTPS listener to gateway %s: %s: %w", gatewayName, string(output), err)
-	}
-	return nil
-}
-
-// removeGatewayListener removes a listener by name from a gateway, if it exists.
-func removeGatewayListener(ctx context.Context, k8sClient client.Client, namespace, gatewayName, listenerName string) {
-	gw := &gatewayapiv1.Gateway{}
-	if err := k8sClient.Get(ctx, client.ObjectKey{Name: gatewayName, Namespace: namespace}, gw); err != nil {
-		return
-	}
-	var listeners []gatewayapiv1.Listener
-	for _, l := range gw.Spec.Listeners {
-		if string(l.Name) != listenerName {
-			listeners = append(listeners, l)
-		}
-	}
-	gw.Spec.Listeners = listeners
-	_ = k8sClient.Update(ctx, gw)
 }
 
 // PatchDeploymentJSON applies a JSON patch (RFC 6902) to a deployment.

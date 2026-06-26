@@ -207,6 +207,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 
 	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
 		mcpBkr.logger.DebugContext(ctx, "gateway client session connected", "gatewaySessionID", session.SessionID())
+		mcpBkr.logger.InfoContext(ctx, "request-flow", "event", "broker-session-registered", "session", session.SessionID())
 	})
 
 	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
@@ -225,6 +226,8 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 			attrs = append(attrs, attribute.String("mcp.session.id", sid))
 		}
 		spanTracker.start(ctx, id, "mcp-broker.handle-request", attrs...)
+		sid := sessionIDFromContext(ctx)
+		mcpBkr.logger.InfoContext(ctx, "request-flow", "event", "broker-request", "method", method, "session", sid)
 		mcpBkr.logger.DebugContext(ctx, "processing request", "method", method)
 	})
 

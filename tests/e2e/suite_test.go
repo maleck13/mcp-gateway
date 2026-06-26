@@ -142,12 +142,20 @@ var _ = SynchronizedBeforeSuite(func() {
 		g.Expect(extList.Items).To(BeEmpty())
 	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
-	By("removing stale HTTPS listener if present from a prior run")
-	removeGatewayListener(ctx, k8sClient, GatewayNamespace, GatewayName, GatewayListenerName)
-
-	By("adding HTTPS listener to the gateway")
-	Expect(AddGatewayHTTPSListener(ctx, GatewayNamespace, GatewayName,
-		GatewayListenerName, "*.mcp-gateway.local", "mcp-gateway-tls-cert", 8443)).To(Succeed())
+	By("waiting for gateway to be programmed")
+	Eventually(func(g Gomega) {
+		gw := &gatewayapiv1.Gateway{}
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: GatewayName, Namespace: GatewayNamespace}, gw)
+		g.Expect(err).NotTo(HaveOccurred())
+		programmed := false
+		for _, cond := range gw.Status.Conditions {
+			if cond.Type == string(gatewayapiv1.GatewayConditionProgrammed) && cond.Status == metav1.ConditionTrue {
+				programmed = true
+				break
+			}
+		}
+		g.Expect(programmed).To(BeTrue(), "gateway %s should have Programmed=True", GatewayName)
+	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
 	By("setting up MCPGatewayExtension with ReferenceGrant")
 	defaultMCPGatewayExt = NewMCPGatewayExtensionSetup(k8sClient).
@@ -217,19 +225,16 @@ var _ = SynchronizedAfterSuite(func() {
 
 	By("Tearing down the test environment")
 
-	By("cleaning up gateway CA bundle and deployment patches")
-	caBundle := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "gateway-ca-bundle", Namespace: SystemNamespace},
-	}
-	_ = k8sClient.Delete(ctx, caBundle)
-	_ = RemoveDeploymentCommandFlag(ctx, SystemNamespace, "mcp-gateway", "--gateway-ca-cert=/certs/gateway-ca.crt")
-	_ = RemoveDeploymentVolumeMount(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
-	_ = RemoveDeploymentVolume(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
+	// By("cleaning up gateway CA bundle and deployment patches")
+	// caBundle := &corev1.Secret{
+	// 	ObjectMeta: metav1.ObjectMeta{Name: "gateway-ca-bundle", Namespace: SystemNamespace},
+	// }
+	// _ = k8sClient.Delete(ctx, caBundle)
+	// _ = RemoveDeploymentCommandFlag(ctx, SystemNamespace, "mcp-gateway", "--gateway-ca-cert=/certs/gateway-ca.crt")
+	// _ = RemoveDeploymentVolumeMount(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
+	// _ = RemoveDeploymentVolume(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
 
-	By("removing HTTPS listener from gateway")
-	removeGatewayListener(ctx, k8sClient, GatewayNamespace, GatewayName, GatewayListenerName)
-
-	if defaultMCPGatewayExt != nil {
-		defaultMCPGatewayExt.TearDown(ctx)
-	}
+	// if defaultMCPGatewayExt != nil {
+	// 	defaultMCPGatewayExt.TearDown(ctx)
+	// }
 })

@@ -34,8 +34,18 @@ func main() {
 	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
 		log.Printf("Client %s disconnected", session.SessionID())
 	})
-	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
-		log.Printf("Processing %s request", method)
+	hooks.AddBeforeAny(func(ctx context.Context, _ any, method mcp.MCPMethod, _ any) {
+		sessionID := "-"
+		if s := server.ClientSessionFromContext(ctx); s != nil {
+			sessionID = s.SessionID()
+		}
+		log.Printf("Processing %s session=%s", method, sessionID)
+	})
+	hooks.AddOnSuccess(func(_ context.Context, _ any, method mcp.MCPMethod, _ any, _ any) {
+		log.Printf("Completed %s", method)
+	})
+	hooks.AddOnError(func(_ context.Context, _ any, method mcp.MCPMethod, _ any, err error) {
+		log.Printf("Error in %s: %v", method, err)
 	})
 
 	s := server.NewMCPServer(
@@ -130,7 +140,7 @@ func main() {
 		s,
 		server.WithStreamableHTTPServer(httpServer),
 	)
-	mux.Handle("/mcp", streamableHTTPServer)
+	mux.Handle("/mcp", logResponse(streamableHTTPServer))
 
 	go func() {
 		fmt.Printf("Serving HTTPStreamable on http://localhost:%s/mcp\n", port)
@@ -148,6 +158,36 @@ func main() {
 	if err := streamableHTTPServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown error: %v", err)
 	}
+}
+
+type responseRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *responseRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func logResponse(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		reqSession := r.Header.Get("Mcp-Session-Id")
+		if reqSession == "" {
+			reqSession = "-"
+		}
+		respSession := rec.Header().Get("Mcp-Session-Id")
+		if respSession == "" {
+			respSession = "-"
+		}
+		clientID := r.Header.Get("X-Client-Id")
+		if clientID == "" {
+			clientID = "-"
+		}
+		log.Printf("%s %s %d req-session=%s resp-session=%s x-client-id=%s", r.Method, r.URL.Path, rec.status, reqSession, respSession, clientID)
+	})
 }
 
 func greetHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

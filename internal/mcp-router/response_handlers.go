@@ -14,11 +14,25 @@ import (
 func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeaders *eppb.HttpHeaders, requestHeaders *eppb.HttpHeaders, req *MCPRequest) ([]*eppb.ProcessingResponse, error) {
 	response := NewResponse()
 	responseHeaderBuilder := NewHeaders()
-	s.Logger.DebugContext(ctx, "[EXT-PROC] HandleResponseHeaders response headers for session mapping...", "responseHeaders", responseHeaders)
-
-	s.Logger.DebugContext(ctx, "[EXT-PROC] HandleResponseHeaders ", "mcp-session-id", getSingleValueHeader(responseHeaders.Headers, sessionHeader))
+	backendSessionID := getSingleValueHeader(responseHeaders.Headers, sessionHeader)
 	gatewaySessionID := getSingleValueHeader(requestHeaders.Headers, sessionHeader)
-	if gatewaySessionID != "" {
+	isHairpin := getSingleValueHeader(requestHeaders.Headers, "mcp-init-host") != ""
+	mcpMethod := ""
+	if req != nil {
+		mcpMethod = req.Method
+	}
+	s.Logger.InfoContext(ctx, "request-flow", "event", "response-headers",
+		"method", mcpMethod,
+		"backend-session", backendSessionID,
+		"gateway-session", gatewaySessionID,
+		"is-hairpin", isHairpin,
+		"will-overwrite", gatewaySessionID != "" && !isHairpin,
+	)
+	// rewrite the response session to the gateway session for client-facing
+	// requests. hairpin requests must preserve the backend session so the
+	// lazyinit client stores the correct upstream session id.
+	if gatewaySessionID != "" && !isHairpin {
+		s.Logger.DebugContext(ctx, "session mapping", "authority", getSingleValueHeader(requestHeaders.Headers, ":authority"))
 		responseHeaderBuilder.WithMCPSession(gatewaySessionID)
 	}
 

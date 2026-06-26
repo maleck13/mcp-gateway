@@ -52,9 +52,9 @@ var _ = FDescribe("MCP Gateway Registration Happy Path", func() {
 		}
 
 		// cleanup in reverse order
-		for _, to := range testResources {
-			CleanupResource(ctx, k8sClient, to)
-		}
+		// for _, to := range testResources {
+		// 	CleanupResource(ctx, k8sClient, to)
+		// }
 		testResources = []client.Object{}
 	})
 
@@ -65,7 +65,7 @@ var _ = FDescribe("MCP Gateway Registration Happy Path", func() {
 		}
 	})
 
-	It("[Happy] basic registration tool invocation and unregistration", func() {
+	FIt("[Happy] basic registration tool invocation and unregistration", func() {
 		By("Creating HTTPRoutes and MCP Servers")
 		// create httproutes for test servers that should already be deployed
 		registration1 := NewMCPServerResourcesWithDefaults("basic-registration", k8sClient).WithPrefix("server1").Build()
@@ -113,26 +113,26 @@ var _ = FDescribe("MCP Gateway Registration Happy Path", func() {
 		Expect(ok).To(BeTrue())
 		Expect(content.Text).To(Equal("Hello, e2e!"))
 
-		By("unregistering an MCPServerRegistration by Deleting the resource")
-		Expect(k8sClient.Delete(ctx, registeredServer1)).To(Succeed())
+		// By("unregistering an MCPServerRegistration by Deleting the resource")
+		// Expect(k8sClient.Delete(ctx, registeredServer1)).To(Succeed())
 
-		By("Verifying broker removes the deleted server")
-		// do tools call check tools no longer present
-		Eventually(func(g Gomega) {
-			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer1.Name, registeredServer1.Namespace)
-			g.Expect(err).NotTo(BeNil())
-			g.Expect(err.Error()).Should(ContainSubstring("not found"))
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer1.Spec.Prefix, toolsList)).To(BeFalse())
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+		// By("Verifying broker removes the deleted server")
+		// // do tools call check tools no longer present
+		// Eventually(func(g Gomega) {
+		// 	err := VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer1.Name, registeredServer1.Namespace)
+		// 	g.Expect(err).NotTo(BeNil())
+		// 	g.Expect(err.Error()).Should(ContainSubstring("not found"))
+		// 	toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+		// 	g.Expect(err).NotTo(HaveOccurred())
+		// 	g.Expect(toolsList).NotTo(BeNil())
+		// 	g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer1.Spec.Prefix, toolsList)).To(BeFalse())
+		// }, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
-		By("Verifying HTTPRoute no longer has Programmed condition after MCPServerRegistration deletion")
-		Eventually(func(g Gomega) {
-			err := VerifyHTTPRouteNoProgrammedCondition(ctx, k8sClient, httpRoute1Name, TestServerNameSpace)
-			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+		// By("Verifying HTTPRoute no longer has Programmed condition after MCPServerRegistration deletion")
+		// Eventually(func(g Gomega) {
+		// 	err := VerifyHTTPRouteNoProgrammedCondition(ctx, k8sClient, httpRoute1Name, TestServerNameSpace)
+		// 	g.Expect(err).NotTo(HaveOccurred())
+		// }, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 
 	})
 

@@ -53,7 +53,7 @@ func NewMCPGatewayClient(ctx context.Context, gatewayHost string) (*mcpclient.Cl
 
 // NewMCPGatewayClientWithHeaders creates a new MCP client with custom headers
 func NewMCPGatewayClientWithHeaders(ctx context.Context, gatewayHost string, headers map[string]string) (*mcpclient.Client, error) {
-	allHeaders := map[string]string{"e2e": "client"}
+	allHeaders := map[string]string{"e2e": "client", "x-client-id": "e2e"}
 	maps.Copy(allHeaders, headers)
 	options := []transport.StreamableHTTPCOption{transport.
 		WithHTTPHeaders(allHeaders), transport.WithContinuousListening()}
@@ -113,7 +113,7 @@ func NewMCPGatewayClientWithNotifications(ctx context.Context, gatewayHost strin
 // NewMCPGatewayClientWithElicitation creates an MCP client with an elicitation handler.
 // Uses manual transport construction since NewStreamableHttpClient doesn't accept ClientOptions.
 func NewMCPGatewayClientWithElicitation(ctx context.Context, gatewayHost string, handler mcpclient.ElicitationHandler) (*mcpclient.Client, error) {
-	allHeaders := map[string]string{"e2e": "client"}
+	allHeaders := map[string]string{"e2e": "client", "x-client-id": "e2e"}
 	options := []transport.StreamableHTTPCOption{
 		transport.WithHTTPHeaders(allHeaders),
 		transport.WithContinuousListening(),

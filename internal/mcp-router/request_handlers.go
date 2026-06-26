@@ -226,7 +226,10 @@ func (mr *MCPRequest) ToBytes() ([]byte, error) {
 
 // HandleRequestHeaders handles request headers minimally.
 func (s *ExtProcServer) HandleRequestHeaders(ctx context.Context, headers *eppb.HttpHeaders) ([]*eppb.ProcessingResponse, error) {
-	s.Logger.DebugContext(ctx, "Request Handler: HandleRequestHeaders called")
+	incomingAuthority := getSingleValueHeader(headers.GetHeaders(), ":authority")
+	incomingSession := getSingleValueHeader(headers.GetHeaders(), sessionHeader)
+	clientID := getSingleValueHeader(headers.GetHeaders(), "x-client-id")
+	s.Logger.InfoContext(ctx, "request-flow", "event", "headers-phase", "incoming-authority", incomingAuthority, "session", incomingSession, "x-client-id", clientID)
 	requestHeaders := NewHeaders()
 	response := NewResponse()
 	requestHeaders.WithAuthority(s.RoutingConfig.MCPGatewayExternalHostname)
@@ -254,7 +257,17 @@ func (s *ExtProcServer) RouteMCPRequest(ctx context.Context, mcpReq *MCPRequest)
 	)
 	defer span.End()
 
-	s.Logger.DebugContext(ctx, "HandleMCPRequest ", "session id", mcpReq.GetSessionID())
+	route := "broker"
+	switch {
+	case mcpReq.isElicitationResponse():
+		route = "elicitation-response"
+	case mcpReq.Method == methodToolCall:
+		route = "tool-call"
+	case mcpReq.Method == methodPromptGet:
+		route = "prompt-get"
+	}
+	s.Logger.InfoContext(ctx, "request-flow", "event", "body-phase", "method", mcpReq.Method, "route", route, "session", mcpReq.GetSessionID(), "server", mcpReq.serverName)
+
 	switch {
 	case mcpReq.isElicitationResponse():
 		span.SetAttributes(attribute.String("mcp.route", "elicitation-response"))
@@ -534,10 +547,11 @@ func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mc
 	}
 	var remoteMCPServerSession string
 	if id, ok := exists[mcpReq.serverName]; ok {
-		s.Logger.DebugContext(ctx, "found session in cache", "session id", mcpReq.GetSessionID(), "for server", serverInfo.Name, "remote session", id)
+		s.Logger.InfoContext(ctx, "request-flow", "event", "session-cache-hit", "server", serverInfo.Name, "remote-session", id, "gateway-session", mcpReq.GetSessionID())
 		remoteMCPServerSession = id
 	}
 	if remoteMCPServerSession == "" {
+		s.Logger.InfoContext(ctx, "request-flow", "event", "lazyinit-start", "server", mcpReq.serverName, "gateway-session", mcpReq.GetSessionID())
 		id, err := s.initializeMCPServerSession(ctx, mcpReq)
 		if err != nil {
 			var routerErr *RouterError
@@ -800,7 +814,7 @@ func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *
 			sessionCloser()
 			return "", NewRouterError(401, fmt.Errorf("invalid session"))
 		}
-		remoteSessionID := clientHandle.GetSessionId()
+		remoteSessionID := clientHandle.GetSessionID()
 		s.Logger.DebugContext(ctx, "got remote session id ", "mcp server", mcpServerConfig.Name, "session", remoteSessionID)
 		{
 			_, storeSpan := tracer().Start(ctx, "mcp-router.session-cache.store",
@@ -862,13 +876,14 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 				return response.WithImmediateResponse(400, "bad request").Build()
 			}
 
-			s.Logger.DebugContext(ctx, "HandleMCPBrokerRequest initialize request", "target", remoteInitializeTarget, "call", mcpReq.Method)
+			s.Logger.InfoContext(ctx, "request-flow", "event", "hairpin-to-backend", "target", remoteInitializeTarget, "method", mcpReq.Method)
 			headers.WithAuthority(remoteInitializeTarget)
 			// ensure we unset the router specific headers so they are not sent to the backend
 			return response.WithRequestBodySetUnsetHeadersResponse(headers.Build(), append([]string{"mcp-init-host", RoutingKey}, internalOnlyHeaders...)).Build()
 		}
 
 	}
+	s.Logger.InfoContext(ctx, "request-flow", "event", "routed-to-broker", "method", mcpReq.Method, "session", mcpReq.sessionID)
 	headers.WithMCPServerName("mcpBroker")
 	// re-inject internal headers stripped in the headers phase so the broker can use them for filtering
 	for _, name := range internalOnlyHeaders {

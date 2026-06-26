@@ -13,15 +13,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 const (
-	elicitationExtName     = "elicitation-ext"
-	elicitationNamespace   = "mcp-elicitation"
-	elicitationDeployment  = "mcp-gateway"
-	elicitationTLSHostname = "*.mcp-gateway.local"
-	elicitationTLSCertName = "mcp-gateway-tls-cert"
-	elicitationPublicHost  = "elicit.mcp-gateway.local"
+	elicitationExtName    = "elicitation-ext"
+	elicitationNamespace  = "mcp-elicitation"
+	elicitationDeployment = "mcp-gateway"
+	elicitationPublicHost = "elicit.mcp-gateway.local"
 )
 
 var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
@@ -45,12 +44,20 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 			g.Expect(client.IgnoreAlreadyExists(err)).NotTo(HaveOccurred())
 		}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 
-		By("Removing stale HTTPS listener if present from a prior run")
-		removeGatewayListener(ctx, k8sClient, GatewayNamespace, ElicitationGatewayName, ElicitationListenerName)
-
-		By("Adding HTTPS listener to elicitation gateway")
-		Expect(AddGatewayHTTPSListener(ctx, GatewayNamespace, ElicitationGatewayName,
-			ElicitationListenerName, elicitationTLSHostname, elicitationTLSCertName, 8443)).To(Succeed())
+		By("Waiting for elicitation gateway to be programmed")
+		Eventually(func(g Gomega) {
+			gw := &gatewayapiv1.Gateway{}
+			err := k8sClient.Get(ctx, client.ObjectKey{Name: ElicitationGatewayName, Namespace: GatewayNamespace}, gw)
+			g.Expect(err).NotTo(HaveOccurred())
+			programmed := false
+			for _, cond := range gw.Status.Conditions {
+				if cond.Type == string(gatewayapiv1.GatewayConditionProgrammed) && cond.Status == metav1.ConditionTrue {
+					programmed = true
+					break
+				}
+			}
+			g.Expect(programmed).To(BeTrue(), "gateway %s should have Programmed=True", ElicitationGatewayName)
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
 		By("Creating MCPGatewayExtension with URL elicitation enabled")
 		elicitationExt = NewMCPGatewayExtensionSetup(k8sClient).

@@ -16,7 +16,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"github.com/mark3labs/mcp-go/client"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/singleflight"
@@ -40,7 +40,7 @@ type SessionCache interface {
 
 // InitForClient defines a function for initializing an MCP server for a client.
 // The caller sets routing headers (router-key, mcp-init-host) in passThroughHeaders before calling.
-type InitForClient func(ctx context.Context, gatewayHost string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinClientPool *clients.HairpinClientPool) (*client.Client, error)
+type InitForClient func(ctx context.Context, gatewayHost string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinClientPool *clients.HairpinClientPool) (*clients.HairpinSession, error)
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
