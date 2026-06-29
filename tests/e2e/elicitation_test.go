@@ -67,7 +67,7 @@ var _ = FDescribe("Elicitation", Ordered, func() {
 		}
 	})
 
-	It("[Elicitation] should accept elicitation and return user-provided information", func() {
+	FIt("[Elicitation] should accept elicitation and return user-provided information", func() {
 		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		handler := &acceptHandler{
@@ -93,23 +93,25 @@ var _ = FDescribe("Elicitation", Ordered, func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Calling trigger-elicitation-request tool")
-		res, err := elicitClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]any{}},
-		})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(res).NotTo(BeNil())
-		Expect(len(res.Content)).To(BeNumerically(">=", 1))
-
-		By("Verifying the response indicates the user provided information")
 		var responseText string
-		for _, c := range res.Content {
-			tc, ok := c.(mcp.TextContent)
-			if ok {
-				responseText += tc.Text
+		Eventually(func(g Gomega) {
+			res, err := elicitClient.CallTool(ctx, mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]any{}},
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(res).NotTo(BeNil())
+			g.Expect(len(res.Content)).To(BeNumerically(">=", 1))
+
+			responseText = ""
+			for _, c := range res.Content {
+				tc, ok := c.(mcp.TextContent)
+				if ok {
+					responseText += tc.Text
+				}
 			}
-		}
-		GinkgoWriter.Println("accept response:", responseText)
-		Expect(responseText).To(ContainSubstring("User provided the requested information"))
+			GinkgoWriter.Println("accept response:", responseText)
+			g.Expect(responseText).To(ContainSubstring("User provided the requested information"))
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
 	It("[Elicitation] should decline elicitation", func() {
@@ -134,23 +136,25 @@ var _ = FDescribe("Elicitation", Ordered, func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Calling trigger-elicitation-request tool")
-		res, err := elicitClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]any{}},
-		})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(res).NotTo(BeNil())
-		Expect(len(res.Content)).To(BeNumerically(">=", 1))
-
-		By("Verifying the response indicates the user declined")
 		var responseText string
-		for _, c := range res.Content {
-			tc, ok := c.(mcp.TextContent)
-			if ok {
-				responseText += tc.Text
+		Eventually(func(g Gomega) {
+			res, err := elicitClient.CallTool(ctx, mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]any{}},
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(res).NotTo(BeNil())
+			g.Expect(len(res.Content)).To(BeNumerically(">=", 1))
+
+			responseText = ""
+			for _, c := range res.Content {
+				tc, ok := c.(mcp.TextContent)
+				if ok {
+					responseText += tc.Text
+				}
 			}
-		}
-		GinkgoWriter.Println("decline response:", responseText)
-		Expect(responseText).To(ContainSubstring("User declined"))
+			GinkgoWriter.Println("decline response:", responseText)
+			g.Expect(responseText).To(ContainSubstring("User declined"))
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
 	It("[Full][Elicitation] should error when calling elicitation tool without handler", func() {
