@@ -96,6 +96,7 @@ func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeade
 	// mode to STREAMED so the ext_proc receives each SSE chunk and can rewrite
 	// elicitation request IDs.
 	if req != nil && req.isToolCall() && req.clientElicitation && status == "200" && len(responses) > 0 {
+		s.Logger.DebugContext(ctx, "setting mode override to streamed for elicitation", "server", req.serverName)
 		responses[0].ModeOverride = &extprochttp.ProcessingMode{
 			RequestHeaderMode:   extprochttp.ProcessingMode_SEND,
 			ResponseHeaderMode:  extprochttp.ProcessingMode_SEND,

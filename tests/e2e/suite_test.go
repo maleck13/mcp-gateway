@@ -225,16 +225,41 @@ var _ = SynchronizedAfterSuite(func() {
 
 	By("Tearing down the test environment")
 
-	// By("cleaning up gateway CA bundle and deployment patches")
-	// caBundle := &corev1.Secret{
-	// 	ObjectMeta: metav1.ObjectMeta{Name: "gateway-ca-bundle", Namespace: SystemNamespace},
-	// }
-	// _ = k8sClient.Delete(ctx, caBundle)
-	// _ = RemoveDeploymentCommandFlag(ctx, SystemNamespace, "mcp-gateway", "--gateway-ca-cert=/certs/gateway-ca.crt")
-	// _ = RemoveDeploymentVolumeMount(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
-	// _ = RemoveDeploymentVolume(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
+	By("cleaning up gateway CA bundle and deployment patches")
+	caBundle := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "gateway-ca-bundle", Namespace: SystemNamespace},
+	}
+	_ = k8sClient.Delete(ctx, caBundle)
+	_ = RemoveDeploymentCommandFlag(ctx, SystemNamespace, "mcp-gateway", "--gateway-ca-cert=/certs/gateway-ca.crt")
+	_ = RemoveDeploymentVolumeMount(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
+	_ = RemoveDeploymentVolume(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
 
-	// if defaultMCPGatewayExt != nil {
-	// 	defaultMCPGatewayExt.TearDown(ctx)
-	// }
+	if defaultMCPGatewayExt != nil {
+		defaultMCPGatewayExt.TearDown(ctx)
+	}
 })
+
+// newTestGatewayClient creates an MCP gateway client and registers DeferCleanup to close it.
+func newTestGatewayClient() *NotifyingMCPClient {
+	var c *NotifyingMCPClient
+	Eventually(func(g Gomega) {
+		var err error
+		c, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, nil)
+		g.Expect(err).NotTo(HaveOccurred())
+	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+	DeferCleanup(func() {
+		if c != nil {
+			_ = c.Close()
+		}
+	})
+	return c
+}
+
+// deferCleanupResources registers DeferCleanup to delete all objects in reverse order.
+func deferCleanupResources(resources *[]client.Object) {
+	DeferCleanup(func() {
+		for i := len(*resources) - 1; i >= 0; i-- {
+			CleanupResource(ctx, k8sClient, (*resources)[i])
+		}
+	})
+}

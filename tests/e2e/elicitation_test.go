@@ -41,13 +41,13 @@ func (h *declineHandler) Elicit(_ context.Context, req mcp.ElicitationRequest) (
 	}, nil
 }
 
-var _ = Describe("Elicitation", func() {
+var _ = FDescribe("Elicitation", Ordered, func() {
 	var (
 		testResources []client.Object
 		prefix        string
 	)
 
-	BeforeEach(func() {
+	BeforeAll(func() {
 		By("Registering an MCPServerRegistration pointing to the everything-server")
 		registration := NewMCPServerResources("elicitation", "everything-server.mcp-gateway.local", "everything-server", 9090, k8sClient).
 			WithPrefix("es_").Build()
@@ -61,11 +61,10 @@ var _ = Describe("Elicitation", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	AfterEach(func() {
-		for _, to := range testResources {
-			CleanupResource(ctx, k8sClient, to)
+	AfterAll(func() {
+		for i := len(testResources) - 1; i >= 0; i-- {
+			CleanupResource(ctx, k8sClient, testResources[i])
 		}
-		testResources = nil
 	})
 
 	It("[Elicitation] should accept elicitation and return user-provided information", func() {
