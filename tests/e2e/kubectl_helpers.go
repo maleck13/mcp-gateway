@@ -140,22 +140,6 @@ func RemoveDeploymentCommandFlag(ctx context.Context, namespace, deploymentName,
 	return nil
 }
 
-// AddGatewayHTTPSListener patches a Gateway to add an HTTPS listener with TLS termination.
-func AddGatewayHTTPSListener(ctx context.Context, namespace, gatewayName, listenerName, hostname, certSecretName string, port int) error {
-	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/listeners/-","value":{`+
-		`"name":"%s","hostname":"%s","port":%d,"protocol":"HTTPS",`+
-		`"tls":{"mode":"Terminate","certificateRefs":[{"kind":"Secret","name":"%s"}]},`+
-		`"allowedRoutes":{"namespaces":{"from":"All"}}}}]`,
-		listenerName, hostname, port, certSecretName)
-	cmd := exec.CommandContext(ctx, "kubectl", "patch", "gateway", gatewayName,
-		"-n", namespace, "--type=json", "-p", patch)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to add HTTPS listener to gateway %s: %s: %w", gatewayName, string(output), err)
-	}
-	return nil
-}
-
 // PatchDeploymentJSON applies a JSON patch (RFC 6902) to a deployment.
 func PatchDeploymentJSON(ctx context.Context, namespace, deploymentName, patchJSON string) error {
 	cmd := exec.CommandContext(ctx, "kubectl", "patch", "deployment", deploymentName,

@@ -645,6 +645,7 @@ type MCPGatewayExtensionSetup struct {
 	extension        *mcpv1alpha1.MCPGatewayExtension
 	referenceGrant   *gatewayv1beta1.ReferenceGrant
 	httpRoute        *gatewayapiv1.HTTPRoute
+	urlElicitation   bool
 	disableHTTPRoute bool
 	createHTTPRoute  bool
 	createdNamespace bool
@@ -713,6 +714,12 @@ func (s *MCPGatewayExtensionSetup) WithSectionName(sectionName string) *MCPGatew
 	return s
 }
 
+// WithURLElicitation enables URL-based token elicitation on the extension
+func (s *MCPGatewayExtensionSetup) WithURLElicitation() *MCPGatewayExtensionSetup {
+	s.urlElicitation = true
+	return s
+}
+
 // WithDisableHTTPRoute sets the disable-httproute annotation
 func (s *MCPGatewayExtensionSetup) WithDisableHTTPRoute(disable bool) *MCPGatewayExtensionSetup {
 	s.disableHTTPRoute = disable
@@ -747,6 +754,9 @@ func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 	if s.pollInterval != "" {
 		interval, _ := strconv.Atoi(s.pollInterval)
 		spec.BackendPingIntervalSeconds = ptr.To(int32(interval))
+	}
+	if s.urlElicitation {
+		spec.URLElicitation = mcpv1alpha1.URLElicitationEnabled
 	}
 	if s.disableHTTPRoute {
 		spec.HTTPRouteManagement = mcpv1alpha1.HTTPRouteManagementDisabled
