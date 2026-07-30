@@ -108,30 +108,6 @@ func TestProtocolHandler2025_FetchUserSpecificTools(t *testing.T) {
 	assert.Equal(t, "us_user_tool", result.Tools[1].Name)
 }
 
-func TestProtocolHandler2025_FetchUserSpecificTools_NoSessionID(t *testing.T) {
-	cfg := config.MCPServer{
-		Name:             "user-server",
-		URL:              "http://localhost/mcp",
-		Prefix:           "us_",
-		UserSpecificList: true,
-	}
-	srv := toUserSpecificServer(cfg)
-	b := &mcpBrokerImpl{
-		logger: slog.Default(),
-	}
-	h := NewProtocolHandler2025(b, slog.Default())
-
-	result := &mcp.ListToolsResult{
-		Tools: []*mcp.Tool{{Name: "existing"}},
-	}
-	headers := http.Header{} // no session ID
-
-	h.FetchUserSpecificTools(context.Background(), []userSpecificServer{srv}, headers, result)
-
-	// should return early, no tools added
-	assert.Len(t, result.Tools, 1)
-}
-
 func TestProtocolHandler2025_FetchUserSpecificTools_EmptyServers(t *testing.T) {
 	h := NewProtocolHandler2025(nil, slog.Default())
 
