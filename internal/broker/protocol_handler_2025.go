@@ -49,4 +49,3 @@ func (h *ProtocolHandler2025) AggregateCache(_ []upstream.CacheMetadata) (int, s
 func (h *ProtocolHandler2025) StartNotificationWatcher(_ context.Context, _ *upstream.MCPServer) {
 	// existing GET SSE watcher is started inside MCPServer.Connect
 }
-

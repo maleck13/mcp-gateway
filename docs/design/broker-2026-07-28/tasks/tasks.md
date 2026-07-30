@@ -136,13 +136,13 @@ Implement the 2026 protocol handler:
 - `StartNotificationWatcher`: placeholder (wired in Task 6)
 
 **Acceptance criteria:**
-- [ ] `ProtocolHandler2026` implements all 4 methods
-- [ ] `ShouldFetchFresh` triggers on `cacheScope:"private"` or `ttlMs:0`
-- [ ] `AggregateCache` computes correct `min(non-zero ttlMs)`
-- [ ] `AggregateCache` returns `"private"` when any upstream is private or has `userSpecificList`
-- [ ] `AggregateCache` returns `(0, "public")` when all TTLMs are 0 and none are private
-- [ ] Unit tests cover: all-public, mixed, all-private, ttlMs-zero, single server, empty input
-- [ ] `make lint && make test-unit` passes
+- [x] `ProtocolHandler2026` implements all 4 methods
+- [x] `ShouldFetchFresh` triggers on `cacheScope:"private"` or `ttlMs:0`
+- [x] `AggregateCache` computes correct `min(non-zero ttlMs)`
+- [x] `AggregateCache` returns `"private"` when any upstream is private or has `userSpecificList`
+- [x] `AggregateCache` returns `(0, "public")` when all TTLMs are 0 and none are private
+- [x] Unit tests cover: all-public, mixed, all-private, ttlMs-zero, single server, empty input
+- [x] `make lint && make test-unit` passes
 
 **Verification:** `make lint && make test-unit`
 
