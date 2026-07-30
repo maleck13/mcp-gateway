@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"io"
 	"math/big"
@@ -652,4 +653,74 @@ func TestSupportsVersion(t *testing.T) {
 	if up.SupportsVersion("9999-01-01") {
 		t.Error("should not support unknown version")
 	}
+}
+
+func TestCacheMetadata_Defaults(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "defaults"}, "", nil)
+	meta := up.ToolsCacheMetadata()
+	require.Equal(t, 0, meta.TTLMs)
+	require.Equal(t, "", meta.CacheScope)
+	require.False(t, meta.UserSpecificList)
+
+	pmeta := up.PromptsCacheMetadata()
+	require.Equal(t, 0, pmeta.TTLMs)
+	require.Equal(t, "", pmeta.CacheScope)
+	require.False(t, pmeta.UserSpecificList)
+}
+
+func TestCacheMetadata_UserSpecificListFromCRD(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{
+		Name:             "user-specific",
+		UserSpecificList: true,
+	}, "", nil)
+	require.True(t, up.ToolsCacheMetadata().UserSpecificList)
+	require.True(t, up.PromptsCacheMetadata().UserSpecificList)
+}
+
+func TestCacheMetadata_PopulatedFromListTools(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, nil)
+	srv.AddTool(&mcp.Tool{
+		Name:        "t1",
+		Description: "test tool",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	// before listing, defaults
+	require.Equal(t, 0, up.ToolsCacheMetadata().TTLMs)
+
+	_, err := up.ListTools(ctx)
+	require.NoError(t, err)
+
+	// SDK defaults: TTLMs 0 (immediately stale), CacheScope "public"
+	meta := up.ToolsCacheMetadata()
+	require.Equal(t, 0, meta.TTLMs)
+	require.Equal(t, "public", meta.CacheScope)
+}
+
+func TestCacheMetadata_ToolsAndPromptsIndependent(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "indep"}, "", nil)
+
+	// simulate storing different metadata
+	up.clientMu.Lock()
+	up.toolsCacheMeta = CacheMetadata{TTLMs: 5000, CacheScope: "public"}
+	up.promptsCacheMeta = CacheMetadata{TTLMs: 10000, CacheScope: "private"}
+	up.clientMu.Unlock()
+
+	tmeta := up.ToolsCacheMetadata()
+	pmeta := up.PromptsCacheMetadata()
+	require.Equal(t, 5000, tmeta.TTLMs)
+	require.Equal(t, "public", tmeta.CacheScope)
+	require.Equal(t, 10000, pmeta.TTLMs)
+	require.Equal(t, "private", pmeta.CacheScope)
 }

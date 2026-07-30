@@ -428,6 +428,53 @@ func gatewaySessionTTL(gatewaySessionID string) time.Duration {
 	return ttl
 }
 
+// isUserSpecificByCRD checks if the server's CRD config declares userSpecificList.
+func (broker *mcpBrokerImpl) isUserSpecificByCRD(srv userSpecificServer) bool {
+	broker.mcpLock.RLock()
+	defer broker.mcpLock.RUnlock()
+	mgr, ok := broker.mcpServers[srv.id]
+	if !ok {
+		return false
+	}
+	return mgr.Config().UserSpecificList
+}
+
+// fetchStatefulUserTools fetches tools from the given servers using the stateful
+// session pool and merges them into result. Extracted for reuse by ProtocolHandler2025.
+func (broker *mcpBrokerImpl) fetchStatefulUserTools(ctx context.Context, servers []userSpecificServer, headers http.Header, result *mcp.ListToolsResult) {
+	gatewaySessionID := headers.Get(gatewaySessionHeader)
+	if gatewaySessionID == "" {
+		broker.logger.Error("no gateway session ID for user-specific tool fetch")
+		return
+	}
+
+	userHeaders := filterUserHeaders(headers)
+
+	var mu sync.Mutex
+	var allTools []mcp.Tool
+
+	g, gCtx := errgroup.WithContext(ctx)
+	for _, srv := range servers {
+		g.Go(func() error {
+			tools, err := broker.fetchToolsFromServer(gCtx, srv, userHeaders, gatewaySessionID)
+			if err != nil {
+				broker.logger.Error("failed to fetch user-specific tools", "server", srv.name, "error", err)
+				return nil
+			}
+			broker.logger.Debug("fetched user-specific tools", "server", srv.name, "toolCount", len(tools))
+			mu.Lock()
+			allTools = append(allTools, tools...)
+			mu.Unlock()
+			return nil
+		})
+	}
+	_ = g.Wait()
+
+	for i := range allTools {
+		result.Tools = append(result.Tools, &allTools[i])
+	}
+}
+
 // sensitiveForwardHeaders are client headers that must never be forwarded to
 // upstream MCP servers. cookie and proxy-authorization are scoped to the
 // gateway origin/hop, not the upstream, so forwarding them would leak

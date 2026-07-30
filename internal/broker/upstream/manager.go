@@ -99,6 +99,10 @@ type MCP interface {
 	SupportedVersions() []string
 	// SupportsVersion returns true if this upstream supports the given protocol version.
 	SupportsVersion(v string) bool
+	// ToolsCacheMetadata returns cache metadata from the last tools/list response.
+	ToolsCacheMetadata() CacheMetadata
+	// PromptsCacheMetadata returns cache metadata from the last prompts/list response.
+	PromptsCacheMetadata() CacheMetadata
 }
 
 // ActiveMCPServer is the handle returned by Start. It exposes read-only
@@ -115,6 +119,8 @@ type ActiveMCPServer interface {
 	Config() config.MCPServer
 	SupportedVersions() []string
 	SupportsVersion(v string) bool
+	ToolsCacheMetadata() CacheMetadata
+	PromptsCacheMetadata() CacheMetadata
 }
 
 // GatewayTool pairs a tool definition with the handler the gateway
@@ -386,9 +392,11 @@ func (a *activeMCP) GetManagedPrompts() []mcp.Prompt { return a.manager.GetManag
 func (a *activeMCP) GetServedManagedPrompt(p string) *mcp.Prompt {
 	return a.manager.GetServedManagedPrompt(p)
 }
-func (a *activeMCP) Config() config.MCPServer      { return a.manager.mcp.GetConfig() }
-func (a *activeMCP) SupportedVersions() []string   { return a.manager.mcp.SupportedVersions() }
-func (a *activeMCP) SupportsVersion(v string) bool { return a.manager.mcp.SupportsVersion(v) }
+func (a *activeMCP) Config() config.MCPServer            { return a.manager.mcp.GetConfig() }
+func (a *activeMCP) SupportedVersions() []string         { return a.manager.mcp.SupportedVersions() }
+func (a *activeMCP) SupportsVersion(v string) bool       { return a.manager.mcp.SupportsVersion(v) }
+func (a *activeMCP) ToolsCacheMetadata() CacheMetadata   { return a.manager.mcp.ToolsCacheMetadata() }
+func (a *activeMCP) PromptsCacheMetadata() CacheMetadata { return a.manager.mcp.PromptsCacheMetadata() }
 
 func (man *MCPManager) registerCallbacks() func() {
 	man.logger.Debug("registering callbacks", "upstream mcp server", man.mcp.ID())

@@ -71,3 +71,9 @@ func (m *mockActiveServer) SupportsVersion(v string) bool {
 	}
 	return false
 }
+func (m *mockActiveServer) ToolsCacheMetadata() upstream.CacheMetadata {
+	return upstream.CacheMetadata{}
+}
+func (m *mockActiveServer) PromptsCacheMetadata() upstream.CacheMetadata {
+	return upstream.CacheMetadata{}
+}

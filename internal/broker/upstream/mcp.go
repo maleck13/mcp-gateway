@@ -28,6 +28,20 @@ var (
 	defaultExpectContinueTimeout = 1 * time.Second
 )
 
+// CacheMetadata holds per-result-type cache hints from a ListTools or
+// ListPrompts response, plus the CRD-declared user-specific flag so
+// AggregateCache has all scope signals in one struct.
+const (
+	CacheScopePublic  = "public"
+	CacheScopePrivate = "private"
+)
+
+type CacheMetadata struct {
+	TTLMs            int
+	CacheScope       string // CacheScopePublic or CacheScopePrivate
+	UserSpecificList bool   // from CRD, carried through for scope aggregation
+}
+
 // MCPServer represents a connection to an upstream MCP server. It wraps the
 // configuration and client, managing the connection lifecycle and storing
 // initialization state from the MCP handshake.
@@ -52,6 +66,11 @@ type MCPServer struct {
 	hintsMu   sync.RWMutex
 	toolHints map[string]ToolHints
 
+	// cache metadata from the last tools/list and prompts/list responses,
+	// guarded by clientMu
+	toolsCacheMeta   CacheMetadata
+	promptsCacheMeta CacheMetadata
+
 	// notifyHandler receives list-changed notification methods. stored on
 	// the upstream so it can be wired into each new client before its
 	// session connects, leaving no registration gap.
@@ -75,6 +94,8 @@ func NewUpstreamMCP(config *config.MCPServer, gatewayCACertPEM string, logger *s
 		MCPServer:        config,
 		gatewayCACertPEM: gatewayCACertPEM,
 		logger:           logger,
+		toolsCacheMeta:   CacheMetadata{UserSpecificList: config.UserSpecificList},
+		promptsCacheMeta: CacheMetadata{UserSpecificList: config.UserSpecificList},
 	}
 	up.headers = map[string]string{
 		"user-agent":        "mcp-broker",
@@ -434,6 +455,20 @@ func (up *MCPServer) Ping(ctx context.Context) error {
 	return session.Ping(ctx, nil)
 }
 
+// ToolsCacheMetadata returns the cache metadata from the last tools/list response.
+func (up *MCPServer) ToolsCacheMetadata() CacheMetadata {
+	up.clientMu.RLock()
+	defer up.clientMu.RUnlock()
+	return up.toolsCacheMeta
+}
+
+// PromptsCacheMetadata returns the cache metadata from the last prompts/list response.
+func (up *MCPServer) PromptsCacheMetadata() CacheMetadata {
+	up.clientMu.RLock()
+	defer up.clientMu.RUnlock()
+	return up.promptsCacheMeta
+}
+
 // SupportsPrompts checks if the upstream server declared prompt capabilities
 func (up *MCPServer) SupportsPrompts() bool {
 	if up.init == nil || up.init.Capabilities == nil {
@@ -456,7 +491,16 @@ func (up *MCPServer) ListPrompts(ctx context.Context) (*mcp.ListPromptsResult, e
 	if session == nil {
 		return nil, fmt.Errorf("client not connected")
 	}
-	return session.ListPrompts(ctx, nil)
+	result, err := session.ListPrompts(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	// partial update: preserve UserSpecificList set at construction
+	up.clientMu.Lock()
+	up.promptsCacheMeta.TTLMs = result.TTLMs
+	up.promptsCacheMeta.CacheScope = result.CacheScope
+	up.clientMu.Unlock()
+	return result, nil
 }
 
 // ListTools retrieves the list of available tools from the upstream MCP server
@@ -465,7 +509,16 @@ func (up *MCPServer) ListTools(ctx context.Context) (*mcp.ListToolsResult, error
 	if session == nil {
 		return nil, fmt.Errorf("client not connected")
 	}
-	return session.ListTools(ctx, nil)
+	result, err := session.ListTools(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	// partial update: preserve UserSpecificList set at construction
+	up.clientMu.Lock()
+	up.toolsCacheMeta.TTLMs = result.TTLMs
+	up.toolsCacheMeta.CacheScope = result.CacheScope
+	up.clientMu.Unlock()
+	return result, nil
 }
 
 // SupportsResources checks if the upstream server declared resource capabilities

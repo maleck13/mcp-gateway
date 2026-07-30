@@ -188,6 +188,9 @@ func (m *MockMCP) SupportsVersion(v string) bool {
 	return false
 }
 
+func (m *MockMCP) ToolsCacheMetadata() CacheMetadata   { return CacheMetadata{} }
+func (m *MockMCP) PromptsCacheMetadata() CacheMetadata { return CacheMetadata{} }
+
 // newMockMCP creates a MockMCP with sensible defaults for testing
 func newMockMCP(name, prefix string) *MockMCP {
 	id := config.UpstreamMCPID(fmt.Sprintf("%s:%s:http://mock/mcp", name, prefix))
