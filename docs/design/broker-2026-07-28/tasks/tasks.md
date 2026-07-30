@@ -80,12 +80,12 @@ type cacheMetadata struct {
 - Add `ToolsCacheMetadata()` and `PromptsCacheMetadata()` to the `MCP` and `ActiveMCPServer` interfaces
 
 **Acceptance criteria:**
-- [ ] `cacheMetadata` struct defined
-- [ ] `MCPServer` stores metadata per result type (`toolsCacheMeta`, `promptsCacheMeta`)
-- [ ] `MCP` and `ActiveMCPServer` interfaces expose `ToolsCacheMetadata()` and `PromptsCacheMetadata()`
-- [ ] Defaults are `TTLMs:0`, `CacheScope:"public"` before first list
-- [ ] Unit test: tools and prompts metadata populated independently from their list results
-- [ ] `make lint && make test-unit` passes
+- [x] `cacheMetadata` struct defined
+- [x] `MCPServer` stores metadata per result type (`toolsCacheMeta`, `promptsCacheMeta`)
+- [x] `MCP` and `ActiveMCPServer` interfaces expose `ToolsCacheMetadata()` and `PromptsCacheMetadata()`
+- [x] Defaults are `TTLMs:0`, `CacheScope:"public"` before first list
+- [x] Unit test: tools and prompts metadata populated independently from their list results
+- [x] `make lint && make test-unit` passes
 
 **Verification:** `make lint && make test-unit`
 
@@ -113,12 +113,12 @@ type ProtocolHandler interface {
 **Key constraint:** existing unit tests for `FetchUserSpecificTools` and `filteringMiddleware` must pass with minimal changes.
 
 **Acceptance criteria:**
-- [ ] `ProtocolHandler` interface defined in `protocol_handler.go`
-- [ ] `ProtocolHandler2025` implements all 4 methods
-- [ ] `ShouldFetchFresh` uses `UserSpecificList` CRD field only
-- [ ] `AggregateCache` returns zero values (no aggregation for 2025)
-- [ ] Existing `user_specific_tools_test.go` tests pass
-- [ ] `make lint && make test-unit` passes
+- [x] `ProtocolHandler` interface defined in `protocol_handler.go`
+- [x] `ProtocolHandler2025` implements all 4 methods
+- [x] `ShouldFetchFresh` uses `UserSpecificList` CRD field only
+- [x] `AggregateCache` returns zero values (no aggregation for 2025)
+- [x] Existing `user_specific_tools_test.go` tests pass
+- [x] `make lint && make test-unit` passes
 
 **Verification:** `make lint && make test-unit`
 

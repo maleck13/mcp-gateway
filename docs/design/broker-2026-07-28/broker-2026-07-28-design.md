@@ -193,5 +193,5 @@ None. `userSpecificList` stays for 2025 backward compat.
 
 See:
 - [Implementation plan](tasks/tasks.md) — 8 tasks ordered by dependency
-- [Test cases](tasks/test_cases.md) — integration and e2e tests covering G1-G5
+- [Test cases](tasks/test_cases.md) — integration and e2e tests covering G1-G6
 - [Documentation plan](tasks/documentation.md) — security architecture and design doc updates
